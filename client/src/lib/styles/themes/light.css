@@ -56,6 +56,7 @@
     --color-focus-ring: #c2410c;
     --color-selection: #fed7aa;
     --color-scrollbar: #c9c9cf;
+    --color-scrollbar-hover: #a1a1aa;
 
     /* Sombras */
     --shadow-sm: 0 1px 2px #18181b14;

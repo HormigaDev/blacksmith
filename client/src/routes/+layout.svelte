@@ -1,8 +1,10 @@
 <script lang="ts">
     import '$lib/styles/global.css';
 
+    import { Tooltip } from 'bits-ui';
     import type { Snippet } from 'svelte';
 
+    import Toaster from '$lib/components/ui/Toaster.svelte';
     import { i18n } from '$lib/i18n';
     import { applyTheme, theme } from '$lib/theme';
 
@@ -15,4 +17,8 @@
     });
 </script>
 
-{@render children()}
+<Tooltip.Provider delayDuration={400}>
+    {@render children()}
+</Tooltip.Provider>
+
+<Toaster />

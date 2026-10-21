@@ -123,7 +123,9 @@ function walk(dir) {
     });
 }
 
-for (const file of walk(SRC).filter((path) => extname(path) === '.svelte')) {
+// El grupo de rutas (dev) son herramientas internas que no existen en producción.
+const DEV_ROUTES = join(SRC, 'routes', '(dev)');
+for (const file of walk(SRC).filter((path) => extname(path) === '.svelte' && !path.startsWith(DEV_ROUTES))) {
     const source = readFileSync(file, 'utf8');
     let markup = source
         .replace(/<script[\s\S]*?<\/script>/g, blank)

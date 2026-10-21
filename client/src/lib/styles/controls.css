@@ -1,0 +1,414 @@
+/*
+ * Capa compartida de controles (prefijo `bs-`). Úsese SOLO desde src/lib/components/ui/.
+ *
+ * Existe porque el <style> con alcance de Svelte no llega a los elementos que renderiza
+ * bits-ui (y menos a los que van en un portal), y porque todos los controles deben verse
+ * idénticos: borde, radio, altura, foco y estados salen de aquí.
+ */
+
+/* --- Contenedor de control: input, textarea, trigger de select, campo de fecha/hora --- */
+
+.bs-control {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+    min-height: var(--control-height-md);
+    padding: var(--space-0) var(--control-padding-inline);
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-normal);
+    color: var(--color-text);
+    background-color: var(--color-surface);
+    border: var(--border-width) solid var(--color-border);
+    border-radius: var(--radius-md);
+    transition:
+        border-color var(--duration-fast) var(--easing-standard),
+        box-shadow var(--duration-fast) var(--easing-standard);
+}
+
+.bs-control:hover {
+    border-color: var(--color-border-strong);
+}
+
+.bs-control:focus-within,
+.bs-control[data-state='open'] {
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 var(--space-px) var(--color-accent);
+}
+
+/* El anillo lo pone el contenedor: el elemento interno no dibuja el suyo. */
+.bs-control :focus-visible {
+    outline: none;
+}
+
+.bs-control[data-invalid],
+.bs-control[aria-invalid='true'] {
+    border-color: var(--color-danger);
+}
+
+.bs-control[data-invalid]:focus-within {
+    box-shadow: 0 0 0 var(--space-px) var(--color-danger);
+}
+
+.bs-control[data-disabled],
+.bs-control:has(:disabled) {
+    color: var(--color-text-disabled);
+    background-color: var(--color-bg-subtle);
+    border-color: var(--color-border);
+    box-shadow: none;
+    cursor: not-allowed;
+}
+
+.bs-control-sm {
+    min-height: var(--control-height-sm);
+    padding: var(--space-0) var(--space-2);
+}
+
+.bs-control-lg {
+    min-height: var(--control-height-lg);
+    font-size: var(--font-size-md);
+}
+
+/* Elemento nativo dentro del contenedor: sin borde ni fondo propios. */
+.bs-control-input {
+    flex: 1;
+    min-width: 0;
+    padding: var(--space-0);
+    font-size: inherit;
+    color: inherit;
+    background-color: transparent;
+    border: none;
+}
+
+.bs-control-input::placeholder,
+.bs-control [data-placeholder] {
+    color: var(--color-text-subtle);
+}
+
+.bs-control-input:disabled {
+    cursor: not-allowed;
+}
+
+/* Íconos y botones de ícono dentro del control */
+.bs-control-icon {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    color: var(--color-text-subtle);
+}
+
+.bs-control svg,
+.bs-popover svg,
+.bs-icon-button svg {
+    width: var(--icon-size-sm);
+    height: var(--icon-size-sm);
+    flex-shrink: 0;
+}
+
+.bs-icon-button {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-1);
+    color: var(--color-text-subtle);
+    background-color: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    transition:
+        color var(--duration-fast) var(--easing-standard),
+        background-color var(--duration-fast) var(--easing-standard);
+}
+
+.bs-icon-button:hover:not(:disabled) {
+    color: var(--color-text);
+    background-color: var(--color-surface-hover);
+}
+
+.bs-icon-button:focus-visible {
+    outline: var(--focus-ring-width) solid var(--color-focus-ring);
+    outline-offset: var(--space-0);
+}
+
+/* --- Panel flotante: menús de select, calendario, popovers --- */
+
+.bs-popover {
+    z-index: var(--z-dropdown);
+    min-width: max(var(--popover-min-width), var(--bits-select-anchor-width, 0px));
+    max-height: min(var(--popover-max-height), var(--bits-select-content-available-height, 100vh));
+    padding: var(--space-1);
+    overflow-y: auto;
+    color: var(--color-text);
+    background-color: var(--color-surface-raised);
+    border: var(--border-width) solid var(--color-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    outline: none;
+    animation: bs-pop-in var(--duration-fast) var(--easing-standard);
+}
+
+@keyframes bs-pop-in {
+    from {
+        opacity: 0;
+        transform: translateY(calc(-1 * var(--space-1)));
+    }
+}
+
+/* --- Opción de una lista (select, menús) --- */
+
+.bs-option {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: var(--control-height-sm);
+    padding: var(--space-1) var(--space-2);
+    font-size: var(--font-size-sm);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    user-select: none;
+    outline: none;
+}
+
+.bs-option[data-highlighted] {
+    background-color: var(--color-surface-hover);
+}
+
+.bs-option[data-selected] {
+    color: var(--color-accent);
+    font-weight: var(--font-weight-medium);
+}
+
+.bs-option[data-disabled] {
+    color: var(--color-text-disabled);
+    cursor: not-allowed;
+}
+
+.bs-option-check {
+    display: inline-flex;
+    width: var(--icon-size-sm);
+    margin-left: auto;
+}
+
+/* --- Segmentos editables de fecha y hora --- */
+
+.bs-segment {
+    padding: var(--space-0) var(--space-px);
+    font-variant-numeric: tabular-nums;
+    border-radius: var(--radius-sm);
+    outline: none;
+}
+
+.bs-segment[data-segment='literal'] {
+    color: var(--color-text-subtle);
+}
+
+.bs-segment:focus {
+    color: var(--color-on-accent);
+    background-color: var(--color-accent);
+}
+
+/* --- Select --- */
+
+.bs-select-trigger {
+    text-align: left;
+    cursor: pointer;
+}
+
+.bs-select-value {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.bs-control .bs-select-chevron {
+    color: var(--color-text-subtle);
+    transition: transform var(--duration-fast) var(--easing-standard);
+}
+
+.bs-select-trigger[data-state='open'] .bs-select-chevron {
+    transform: rotate(180deg);
+}
+
+.bs-option-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* --- Campos segmentados de fecha y hora --- */
+
+.bs-segments {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    min-width: 0;
+}
+
+/* --- Botones con estado: ToggleGroup y ToggleButton --- */
+
+.bs-toggle-group {
+    display: inline-flex;
+    gap: var(--space-px);
+    padding: var(--space-px);
+    background-color: var(--color-bg-subtle);
+    border: var(--border-width) solid var(--color-border);
+    border-radius: var(--radius-md);
+}
+
+.bs-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    min-height: calc(var(--control-height-md) - 4 * var(--space-px));
+    padding: var(--space-0) var(--space-3);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+    color: var(--color-text-muted);
+    background-color: transparent;
+    border: var(--border-width) solid transparent;
+    border-radius: var(--radius-sm);
+    transition:
+        color var(--duration-fast) var(--easing-standard),
+        background-color var(--duration-fast) var(--easing-standard);
+}
+
+.bs-toggle:hover:not(:disabled) {
+    color: var(--color-text);
+}
+
+.bs-toggle[data-state='on'] {
+    color: var(--color-text);
+    background-color: var(--color-surface);
+    border-color: var(--color-border);
+    box-shadow: var(--shadow-sm);
+}
+
+.bs-toggle:disabled {
+    color: var(--color-text-disabled);
+    cursor: not-allowed;
+}
+
+.bs-toggle svg {
+    width: var(--icon-size-sm);
+    height: var(--icon-size-sm);
+}
+
+.bs-toggle-group-sm .bs-toggle,
+.bs-toggle-sm {
+    min-height: calc(var(--control-height-sm) - 4 * var(--space-px));
+    padding: var(--space-0) var(--space-2);
+    font-size: var(--font-size-xs);
+}
+
+.bs-toggle-standalone {
+    min-height: var(--control-height-md);
+    border-color: var(--color-border);
+}
+
+.bs-toggle-standalone[data-state='on'] {
+    color: var(--color-accent);
+    background-color: var(--color-accent-subtle);
+    border-color: var(--color-accent);
+    box-shadow: none;
+}
+
+/* --- Diálogos: Dialog y ConfirmDialog --- */
+
+.bs-dialog-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-overlay);
+    background-color: var(--color-overlay);
+    animation: bs-fade-in var(--duration-normal) var(--easing-standard);
+}
+
+.bs-dialog {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    z-index: var(--z-modal);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    width: min(var(--dialog-width-md), calc(100vw - 2 * var(--space-6)));
+    max-height: calc(100vh - 2 * var(--space-6));
+    padding: var(--space-6);
+    color: var(--color-text);
+    background-color: var(--color-surface-raised);
+    border: var(--border-width) solid var(--color-border);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-lg);
+    transform: translate(-50%, -50%);
+    outline: none;
+    animation: bs-dialog-in var(--duration-normal) var(--easing-standard);
+}
+
+.bs-dialog-sm {
+    width: min(var(--dialog-width-sm), calc(100vw - 2 * var(--space-6)));
+}
+
+.bs-dialog-lg {
+    width: min(var(--dialog-width-lg), calc(100vw - 2 * var(--space-6)));
+}
+
+.bs-dialog-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-4);
+}
+
+.bs-dialog-title {
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-tight);
+}
+
+.bs-dialog-description {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-muted);
+}
+
+.bs-dialog-body {
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.bs-dialog-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+}
+
+@keyframes bs-fade-in {
+    from {
+        opacity: 0;
+    }
+}
+
+@keyframes bs-dialog-in {
+    from {
+        opacity: 0;
+        transform: translate(-50%, calc(-50% + var(--space-2))) scale(0.98);
+    }
+}
+
+/* --- Utilidades de accesibilidad --- */
+
+.bs-visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: calc(-1 * var(--space-px));
+    padding: var(--space-0);
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+}

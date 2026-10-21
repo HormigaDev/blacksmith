@@ -59,6 +59,7 @@
     --duration-slow: 320ms;
     --easing-standard: cubic-bezier(0.2, 0, 0, 1);
     --easing-emphasized: cubic-bezier(0.3, 0, 0, 1.2);
+    --easing-linear: linear;
 
     /* Capas: nunca se escribe un z-index numérico fuera de aquí. */
     --z-base: 0;
@@ -77,6 +78,26 @@
     --control-height-sm: 1.75rem;
     --control-height-md: 2.25rem;
     --control-height-lg: 2.75rem;
+    --control-padding-inline: var(--space-3);
+    --popover-max-height: 18rem;
+    --popover-min-width: 10rem;
+    --dialog-width-sm: 24rem;
+    --dialog-width-md: 32rem;
+    --dialog-width-lg: 44rem;
+    --toast-width: 22rem;
+    --tooltip-max-width: 18rem;
+
+    /* Íconos */
+    --icon-size-sm: 1rem;
+    --icon-size-md: 1.25rem;
+    --icon-size-lg: 1.5rem;
+
+    /* Barra de scroll */
+    --scrollbar-size: 10px;
+    --scrollbar-gap: 2px;
+
+    /* Animaciones que no se anulan con movimiento reducido (indicadores de carga) */
+    --duration-spin: 800ms;
 }
 
 @media (prefers-reduced-motion: reduce) {

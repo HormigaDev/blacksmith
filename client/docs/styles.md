@@ -34,7 +34,9 @@ Con `calc()` se combinan tokens: `margin: calc(-1 * var(--space-2))`.
 src/lib/styles/
   global.css        Punto de entrada. Se importa SOLO en src/routes/+layout.svelte
   tokens.css        Tokens que no dependen del tema (tipografía, espaciado, radios, capas…)
-  base.css          Reset y estilos de elementos HTML. Sin clases.
+  base.css          Reset, elementos HTML, barra de scroll global y ocultación de las flechas
+                    nativas de <input type="number">. Sin clases.
+  controls.css      Capa compartida de los componentes de ui/ (clases `bs-*`). Ver components.md
   themes/
     light.css       Tema de REFERENCIA: define el contrato completo de color y sombra
     dark.css        Un archivo por tema, con exactamente las mismas variables
@@ -86,8 +88,10 @@ color nuevo: primero en `light.css`, después en todos los demás temas.
 - **Eventos como props** (`onclick`, `onchange`), no `createEventDispatcher` ni `on:click`.
 - Props tipadas en la desestructuración: `let { label, variant = "primary" }: Props = $props();`
 - **Estilos con alcance** en el `<style>` del componente. Prohibido `:global(...)` salvo para
-  dar estilo a contenido que no controla el componente (p. ej. HTML renderizado), y con un
-  comentario que lo justifique.
+  dar estilo a contenido que no controla el componente (elementos de bits-ui, HTML renderizado),
+  y con un comentario que lo justifique. Las páginas nunca usan las clases `bs-*` de
+  `controls.css`: usan los componentes de `$lib/components/ui` ([components.md](components.md)).
+- La barra de scroll ya tiene estilo global: no se redefine en componentes.
 - Clases con nombres semánticos y cortos (`.header`, `.title`). Sin utilidades tipo Tailwind.
 - Variantes por props que se traducen a clases o a variables privadas del componente
   (prefijo `--_`), nunca a colores en línea:

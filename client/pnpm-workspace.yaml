@@ -1,0 +1,13 @@
+# Configuración de pnpm del cliente (pnpm 10+ lee aquí sus ajustes).
+
+# Cadena de suministro: no se instala ninguna versión publicada hace menos de 7 días
+# (en minutos). La mayoría de los paquetes comprometidos se detectan y retiran antes.
+minimumReleaseAge: 10080
+
+# Versiones exactas en package.json: una actualización siempre es un cambio revisado.
+saveExact: true
+
+# Los scripts de instalación de las dependencias están bloqueados por defecto; solo se
+# permiten los de esta lista.
+onlyBuiltDependencies:
+    - esbuild

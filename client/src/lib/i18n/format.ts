@@ -77,3 +77,17 @@ export function formatRelativeTime(date: Date | number, now: Date | number = Dat
     }
     return formatter.format(0, 'second');
 }
+
+const lists = new Map<string, Intl.ListFormat>();
+
+/** Lista natural según el idioma: `formatList(['.pem', '.key', '.pub'])` → ".pem, .key y .pub". */
+export function formatList(items: readonly string[], type: Intl.ListFormatType = 'conjunction'): string {
+    const locale = i18n.current.intl;
+    const key = `${locale}|${type}`;
+    let formatter = lists.get(key);
+    if (formatter === undefined) {
+        formatter = new Intl.ListFormat(locale, { type, style: 'long' });
+        lists.set(key, formatter);
+    }
+    return formatter.format(items);
+}

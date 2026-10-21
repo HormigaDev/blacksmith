@@ -2,6 +2,9 @@ target
 .harness-mem
 .claude/state
 
+**/.claude/
+!/.claude
+
 .env
 # Secretos locales de desarrollo
 .secrets/

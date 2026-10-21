@@ -150,7 +150,14 @@ for (const file of walk(SRC).filter((f) => ['.css', '.svelte'].includes(extname(
         }
         for (const match of css.matchAll(/var\(\s*(--[\w-]+)/g)) {
             const name = match[1];
-            if (!globalVariables.has(name) && !localVariables.has(name)) {
+            // `--bits-*` las define bits-ui en tiempo de ejecución (medidas del ancla de un popover);
+            // `--_*` son privadas del componente y pueden venir de una directiva `style:--_x={…}`.
+            if (
+                !globalVariables.has(name) &&
+                !localVariables.has(name) &&
+                !name.startsWith('--bits-') &&
+                !name.startsWith('--_')
+            ) {
                 report(
                     file,
                     lineAt(text, offset + match.index),
