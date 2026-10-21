@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+    "agent",
+    "client/src-tauri",
+    "shared"
+]
+
+# Puedes definir metadatos globales aquí para que todos los crates los hereden
+[workspace.package]
+version = "1.0.0"
+authors = ["HormigaDev"]
+repository = "https://github.com/HormigaDev/bbel-blacksmith"
+edition = "2021"
+license = "MIT"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

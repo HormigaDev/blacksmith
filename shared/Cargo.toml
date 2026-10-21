@@ -1,0 +1,9 @@
+[package]
+name = "shared"
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }

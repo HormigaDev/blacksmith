@@ -1,0 +1,11 @@
+[package]
+name = "agent"
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+
+[dependencies]
+axum = "0.8"
+shared = { path = "../shared" }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
