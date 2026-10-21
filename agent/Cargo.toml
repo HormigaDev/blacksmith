@@ -1,11 +1,39 @@
 [package]
 name = "agent"
+description = "Agente de BBEL Blacksmith para servidores bare-metal"
 version.workspace = true
 authors.workspace = true
 repository.workspace = true
-edition.workspace = true
+license.workspace = true
+edition = "2024"
+rust-version = "1.97"
+publish = false
 
+[[bin]]
+name = "blacksmith-agent"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+# Features mínimas a propósito: cada una cuesta tamaño de binario y RAM (objetivo < 20 MB en reposo).
 [dependencies]
-axum = "0.8"
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "macros", "matched-path", "tokio", "tracing"] }
+dotenvy = "0.15"
+rustix = { version = "1", default-features = false, features = ["std", "process"] }
+sd-notify = "0.4"
+secrecy = "0.10"
+serde = "1"
 shared = { path = "../shared" }
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tower = { version = "0.5", default-features = false, features = ["limit", "load-shed", "timeout", "util"] }
+tower-http = { version = "0.6", default-features = false, features = ["request-id", "set-header", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "env-filter", "fmt", "json", "std"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+serde_json = "1"
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt"] }

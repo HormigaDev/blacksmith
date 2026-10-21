@@ -1,1 +1,7 @@
 target
+.harness-mem
+.claude/state
+
+.env
+# Secretos locales de desarrollo
+.secrets/

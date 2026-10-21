@@ -1,4 +1,10 @@
 {
     "svelte.enable-ts-plugin": true,
-    "rust-analyzer.linkedProjects": ["./Cargo.toml"]
+    "rust-analyzer.linkedProjects": ["./Cargo.toml"],
+    "files.exclude": {
+        "**/.aws": true,
+        "**/.codex": true,
+        "**/.agents": true,
+        "**/.harness-mem": true
+    }
 }

@@ -14,6 +14,24 @@ repository = "https://github.com/HormigaDev/bbel-blacksmith"
 edition = "2021"
 license = "MIT"
 
+# Solo los crates que declaran `[lints] workspace = true` (agent y shared) adoptan estas reglas.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+# `panic = "abort"` en release: un pánico tumba el agente entero, así que no se admiten.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+indexing_slicing = "deny"
+await_holding_lock = "deny"
+mem_forget = "deny"
+
 [profile.release]
 codegen-units = 1
 lto = true

@@ -1,4 +1,11 @@
 //! Tipos compartidos entre la aplicación de escritorio y el agente servidor.
+//!
+//! Este crate es el contrato de la API: cualquier cambio aquí debe romper la compilación del
+//! cliente en lugar de fallar en tiempo de ejecución.
+
+mod error;
+
+pub use error::{ApiErrorBody, ErrorCode};
 
 use serde::{Deserialize, Serialize};
 

@@ -1,0 +1,4 @@
+# Los tests pueden abortar con unwrap/expect; el código de producción no (ver [workspace.lints]).
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-indexing-slicing-in-tests = true
