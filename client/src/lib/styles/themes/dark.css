@@ -1,0 +1,56 @@
+/* Tema oscuro. Debe declarar las mismas variables que light.css (tema de referencia). */
+
+:root[data-theme='dark'] {
+    color-scheme: dark;
+
+    /* Fondos y superficies, de más profunda a más elevada */
+    --color-bg: #0f0f11;
+    --color-bg-subtle: #141417;
+    --color-surface: #18181b;
+    --color-surface-raised: #1f1f23;
+    --color-surface-hover: #26262b;
+    --color-surface-active: #2e2e34;
+    --color-overlay: #00000099;
+
+    /* Bordes */
+    --color-border: #2a2a30;
+    --color-border-strong: #3f3f46;
+
+    /* Texto */
+    --color-text: #f4f4f5;
+    --color-text-muted: #a1a1aa;
+    --color-text-subtle: #8b8b94;
+    --color-text-disabled: #5b5b63;
+    --color-text-inverse: #18181b;
+
+    /* Acento (identidad: brasa de forja) */
+    --color-accent: #f97316;
+    --color-accent-hover: #fb8a3c;
+    --color-accent-active: #ea6a0c;
+    --color-accent-subtle: #2a1508;
+    --color-on-accent: #18181b;
+
+    /* Estados */
+    --color-success: #4ade80;
+    --color-success-subtle: #0f2417;
+    --color-on-success: #0f0f11;
+    --color-warning: #facc15;
+    --color-warning-subtle: #2a2108;
+    --color-on-warning: #0f0f11;
+    --color-danger: #f87171;
+    --color-danger-subtle: #2a1215;
+    --color-on-danger: #0f0f11;
+    --color-info: #60a5fa;
+    --color-info-subtle: #0f1a33;
+    --color-on-info: #0f0f11;
+
+    /* Interacción */
+    --color-focus-ring: #fb8a3c;
+    --color-selection: #7c2d12;
+    --color-scrollbar: #3f3f46;
+
+    /* Sombras: en oscuro se apoyan más en el contraste de superficie que en la sombra. */
+    --shadow-sm: 0 1px 2px #00000066;
+    --shadow-md: 0 2px 4px #0000004d, 0 4px 12px #00000066;
+    --shadow-lg: 0 8px 24px #00000080, 0 2px 6px #0000004d;
+}

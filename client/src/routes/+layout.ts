@@ -1,5 +1,10 @@
-// Tauri doesn't have a Node.js server to do proper SSR
-// so we use adapter-static with a fallback to index.html to put the site in SPA mode
-// See: https://svelte.dev/docs/kit/single-page-apps
-// See: https://v2.tauri.app/start/frontend/sveltekit/ for more info
+// Tauri no tiene servidor Node: la app es una SPA servida por adapter-static con
+// fallback a index.html. Ver https://svelte.dev/docs/kit/single-page-apps
 export const ssr = false;
+
+import { i18n } from '$lib/i18n';
+
+/** El idioma guardado se carga antes del primer render, para no mostrar otro un instante. */
+export async function load(): Promise<void> {
+    await i18n.init();
+}

@@ -1,0 +1,9 @@
+/*
+ * Punto de entrada de los estilos globales. Se importa una sola vez, en src/routes/+layout.svelte.
+ * Cada tema registrado en src/lib/theme/themes.ts debe importarse aquí.
+ */
+
+@import './tokens.css';
+@import './themes/light.css';
+@import './themes/dark.css';
+@import './base.css';

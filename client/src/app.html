@@ -1,13 +1,28 @@
 <!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <link rel="icon" href="%sveltekit.assets%/favicon.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Tauri + SvelteKit + Typescript App</title>
-    %sveltekit.head%
-  </head>
-  <body data-sveltekit-preload-data="hover">
-    <div style="display: contents">%sveltekit.body%</div>
-  </body>
+<html lang="es">
+    <head>
+        <meta charset="utf-8" />
+        <link rel="icon" href="%sveltekit.assets%/favicon.png" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>BBEL Blacksmith</title>
+        <script>
+            // Aplica el tema antes del primer pintado para evitar un destello del tema equivocado.
+            // Debe coincidir con THEME_STORAGE_KEY y SYSTEM_THEMES de src/lib/theme/themes.ts.
+            // Un id desconocido no rompe nada: :root sin tema válido usa light.css.
+            (function () {
+                var preference = 'system';
+                try {
+                    preference = localStorage.getItem('blacksmith:theme') || 'system';
+                } catch (_) {}
+                if (preference === 'system') {
+                    preference = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+                }
+                document.documentElement.dataset.theme = preference;
+            })();
+        </script>
+        %sveltekit.head%
+    </head>
+    <body data-sveltekit-preload-data="hover">
+        <div style="display: contents">%sveltekit.body%</div>
+    </body>
 </html>
