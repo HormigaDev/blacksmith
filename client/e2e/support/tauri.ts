@@ -13,7 +13,11 @@ export interface TauriCall {
 /** Respuesta por comando, p. ej. `{ 'plugin:dialog|open': '/home/ana/key.pem' }`. */
 export type TauriResponses = Record<string, unknown>;
 
-export async function mockTauri(page: Page, responses: TauriResponses = {}): Promise<void> {
+/** Respuestas por defecto de los comandos de la app: un equipo sin servidores configurados. */
+const DEFAULT_RESPONSES: TauriResponses = { servers_list: [] };
+
+export async function mockTauri(page: Page, overrides: TauriResponses = {}): Promise<void> {
+    const responses = { ...DEFAULT_RESPONSES, ...overrides };
     await page.addInitScript((responses: TauriResponses) => {
         type Callback = (data: unknown) => unknown;
         const callbacks = new Map<number, Callback>();

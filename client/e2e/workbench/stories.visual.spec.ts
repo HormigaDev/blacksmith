@@ -26,15 +26,24 @@ for (const component of STORY_COMPONENTS) {
             await prepareVisualPage(page);
             await page.goto(`/dev/workbench/${component}`);
             await waitForApp(page);
-            await applyVisualFonts(page);
+            // Las historias se cargan de forma diferida: hay que esperar a que aparezcan.
+            await expect(page.locator('[data-story]').first()).toBeVisible();
+            const slugs = await page
+                .locator('[data-story]')
+                .evaluateAll((stories) => stories.map((story) => story.id).filter(Boolean));
+            expect(slugs.length, 'el componente debe tener historias').toBeGreaterThan(0);
 
-            const stories = page.locator('[data-story]');
-            await expect(stories.first()).toBeVisible();
-            expect(await uncoveredCharacters(page, '[data-story]'), 'caracteres sin fuente versionada').toEqual([]);
-
-            for (const story of await stories.all()) {
-                const name = await story.getAttribute('data-story');
-                await expect(story).toHaveScreenshot(`${name}-${theme}.png`);
+            // Cada historia se captura AISLADA (`?story=`): así su captura no depende de las que tenga
+            // encima (una historia nueva desplazaría a las demás a posiciones fraccionarias y el
+            // recorte cambiaría 1 px sin que nada visual haya cambiado).
+            for (const slug of slugs) {
+                await page.goto(`/dev/workbench/${component}?story=${slug}`);
+                await waitForApp(page);
+                await applyVisualFonts(page);
+                const story = page.locator('[data-story]');
+                await expect(story).toHaveCount(1);
+                expect(await uncoveredCharacters(page, '[data-story]'), 'caracteres sin fuente versionada').toEqual([]);
+                await expect(story).toHaveScreenshot(`${component}--${slug}-${theme}.png`);
             }
         });
     }

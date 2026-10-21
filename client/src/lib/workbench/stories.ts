@@ -28,7 +28,15 @@ const modules: Record<string, Loader> = import.meta.env.DEV
     : {};
 
 /** Orden del menú; los grupos no listados van al final, alfabéticamente. */
-export const GROUP_ORDER = ['Acciones', 'Formularios', 'Selección', 'Superposiciones', 'Estado', 'Íconos'];
+export const GROUP_ORDER = [
+    'Acciones',
+    'Formularios',
+    'Selección',
+    'Superposiciones',
+    'Estado',
+    'Íconos',
+    'Servidores',
+];
 
 export function toSlug(value: string): string {
     return value

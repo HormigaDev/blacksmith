@@ -19,6 +19,8 @@
         maxRows?: number;
         /** Íconos o acciones en la esquina superior derecha. */
         trailing?: Snippet;
+        /** Fuente monoespaciada (llaves, configuración, logs). */
+        monospace?: boolean;
     }
 
     let {
@@ -31,6 +33,7 @@
         rows = 3,
         maxRows = 12,
         trailing,
+        monospace = false,
         maxlength,
         disabled,
         id,
@@ -56,6 +59,7 @@
                 bind:value
                 id={controlId}
                 class="bs-control-input textarea"
+                class:monospace
                 {rows}
                 {maxlength}
                 {required}
@@ -88,6 +92,11 @@
         overflow-y: auto;
         resize: none;
         font-family: inherit;
+    }
+
+    .monospace {
+        font-family: var(--font-mono);
+        font-size: var(--font-size-xs);
     }
 
     .trailing {

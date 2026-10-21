@@ -30,6 +30,9 @@ const DEV_URL = 'http://localhost:1420';
 export default defineConfig({
     testDir: 'e2e',
     fullyParallel: true,
+    // Cada worker es un navegador (~300-500 MB) y además corren el build y el servidor de desarrollo:
+    // sin límite, en una máquina con el editor abierto se llegó a agotar la memoria (OOM killer).
+    workers: Number(process.env.E2E_WORKERS ?? 2),
     forbidOnly: CI,
     retries: CI ? 2 : 0,
     reporter: CI ? [['github'], ['html', { open: 'never' }]] : [['list'], ['html', { open: 'never' }]],

@@ -1,7 +1,7 @@
 <!--
     Texto de ayuda al pasar el ratón o enfocar. El disparador recibe las props por el snippet:
     <Tooltip text={t('…')}>{#snippet children(props)}<Button {...props}>…</Button>{/snippet}</Tooltip>
-    Requiere <Tooltip.Provider> en el layout raíz (ya está).
+    Autosuficiente: trae su propio proveedor, así funciona en cualquier árbol (diálogos, historias, tests).
 -->
 <script lang="ts">
     import { Tooltip } from 'bits-ui';
@@ -16,18 +16,20 @@
     let { text, side = 'top', children }: Props = $props();
 </script>
 
-<Tooltip.Root>
-    <Tooltip.Trigger>
-        {#snippet child({ props })}
-            {@render children(props)}
-        {/snippet}
-    </Tooltip.Trigger>
-    <Tooltip.Portal>
-        <Tooltip.Content class="bs-tooltip" {side} sideOffset={6} collisionPadding={8}>
-            {text}
-        </Tooltip.Content>
-    </Tooltip.Portal>
-</Tooltip.Root>
+<Tooltip.Provider delayDuration={400}>
+    <Tooltip.Root>
+        <Tooltip.Trigger>
+            {#snippet child({ props })}
+                {@render children(props)}
+            {/snippet}
+        </Tooltip.Trigger>
+        <Tooltip.Portal>
+            <Tooltip.Content class="bs-tooltip" {side} sideOffset={6} collisionPadding={8}>
+                {text}
+            </Tooltip.Content>
+        </Tooltip.Portal>
+    </Tooltip.Root>
+</Tooltip.Provider>
 
 <style>
     /* Elemento renderizado por bits-ui en un portal: el estilo con alcance no le llega. */

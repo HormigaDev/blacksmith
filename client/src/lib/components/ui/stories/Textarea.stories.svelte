@@ -30,6 +30,15 @@
     </Textarea>
 </Story>
 
+<Story name="Monoespaciado" layout="grid" description="Para llaves, configuración o logs.">
+    <Textarea
+        label="Llave privada"
+        monospace
+        rows={4}
+        value={'-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\n-----END OPENSSH PRIVATE KEY-----'}
+    />
+</Story>
+
 <Story name="Estados" layout="grid">
     <Textarea label="Con error" value="x" error="Describe el motivo con más detalle" />
     <Textarea label="Deshabilitado" value="No editable" disabled />

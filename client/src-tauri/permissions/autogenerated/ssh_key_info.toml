@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-ssh-key-info"
+description = "Enables the ssh_key_info command without any pre-configured scope."
+commands.allow = ["ssh_key_info"]
+
+[[permission]]
+identifier = "deny-ssh-key-info"
+description = "Denies the ssh_key_info command without any pre-configured scope."
+commands.deny = ["ssh_key_info"]

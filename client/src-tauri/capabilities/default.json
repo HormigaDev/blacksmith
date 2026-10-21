@@ -13,6 +13,16 @@
     "core:default",
     "core:window:allow-set-theme",
     "opener:default",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "allow-ssh-save-key",
+    "allow-ssh-key-info",
+    "allow-ssh-forget-key",
+    "allow-ssh-forget-host",
+    "allow-tunnel-open",
+    "allow-tunnel-trust-host",
+    "allow-tunnel-close",
+    "allow-tunnel-status",
+    "allow-servers-list",
+    "allow-server-remove"
   ]
 }

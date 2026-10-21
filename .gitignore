@@ -1,6 +1,5 @@
 target
 .harness-mem
-.claude/state
 
 **/.claude/
 CLAUDE.md

@@ -18,7 +18,9 @@ terminado sin sus tests y, si es un componente, sin sus historias.
 | `pnpm test:visual:update` | Regenera las capturas de referencia tras un cambio visual intencionado. |
 | `pnpm test:all`           | `test` + `test:e2e`.                                                    |
 
-Requisitos: `pnpm exec playwright install chromium webkit`. En Linux, WebKit además necesita
+Requisitos: `pnpm exec playwright install chromium webkit`. Playwright usa 2 navegadores en
+paralelo (`E2E_WORKERS` para cambiarlo): sin límite, con el editor abierto, se llegó a agotar la
+memoria. En Linux, WebKit además necesita
 `sudo apt-get install libevent-2.1-7t64 libgstreamer-plugins-bad1.0-0`; sin ellas,
 `E2E_WEBKIT=0 pnpm test:e2e` omite WebKit (no en CI).
 
@@ -88,7 +90,8 @@ Una captura por historia y tema, comparada **píxel a píxel** (tolerancia cero)
 versionan**: son el resultado esperado del test, no un artefacto. Ignorarlas haría que cada
 máquina generara su propia referencia y el test no detectaría nunca una regresión.
 
-**Determinismo.** La captura es idéntica en cualquier máquina Linux:
+**Determinismo.** La captura es idéntica en cualquier máquina Linux. Cada historia se captura
+**aislada** (`?story=`): su captura no depende de las historias que tenga encima.
 
 | Fuente de variación                  | Cómo se neutraliza                                                                                                                                                                                                     |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
