@@ -3,8 +3,12 @@ target
 .claude/state
 
 **/.claude/
-!/.claude
+CLAUDE.md
 
 .env
 # Secretos locales de desarrollo
 .secrets/
+
+Plans.md
+
+**/out/

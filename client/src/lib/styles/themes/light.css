@@ -27,22 +27,22 @@
     /* Texto */
     --color-text: #18181b;
     --color-text-muted: #52525b;
-    --color-text-subtle: #71717a;
+    --color-text-subtle: #6a6a73;
     --color-text-disabled: #a1a1aa;
     --color-text-inverse: #fafafa;
 
     /* Acento (identidad: brasa de forja) */
-    --color-accent: #c2410c;
+    --color-accent: #bf400c;
     --color-accent-hover: #ad3a0b;
     --color-accent-active: #9a3412;
     --color-accent-subtle: #fff1e8;
     --color-on-accent: #ffffff;
 
     /* Estados */
-    --color-success: #15803d;
+    --color-success: #147b3a;
     --color-success-subtle: #ecfdf3;
     --color-on-success: #ffffff;
-    --color-warning: #a16207;
+    --color-warning: #995d07;
     --color-warning-subtle: #fefbe8;
     --color-on-warning: #ffffff;
     --color-danger: #b91c1c;
@@ -53,7 +53,7 @@
     --color-on-info: #ffffff;
 
     /* Interacción */
-    --color-focus-ring: #c2410c;
+    --color-focus-ring: #bf400c;
     --color-selection: #fed7aa;
     --color-scrollbar: #c9c9cf;
     --color-scrollbar-hover: #a1a1aa;

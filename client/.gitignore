@@ -9,3 +9,10 @@ node_modules
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .claude/state
+
+# Resultados de tests (las capturas de referencia de e2e/__screenshots__ sí se versionan)
+/test-results
+/playwright-report
+/blob-report
+/playwright/.cache
+.vitest-attachments

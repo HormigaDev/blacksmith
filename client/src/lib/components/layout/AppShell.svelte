@@ -51,7 +51,10 @@
         gap: var(--space-4);
     }
 
+    /* Bloque contenedor de los elementos absolutos (etiquetas ocultas, controles flotantes):
+       sin él escapan del recorte y alargan el documento, que vuelve a hacer scroll entero. */
     .content {
+        position: relative;
         overflow: auto;
         padding: var(--space-6);
     }

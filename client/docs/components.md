@@ -11,7 +11,8 @@ su aspecto, su accesibilidad y su comportamiento ya están resueltos aquí. Si f
 se añade al componente existente; si falta un componente, se crea en `ui/` siguiendo este
 documento.
 
-Catálogo vivo, solo en desarrollo: `pnpm dev` → <http://localhost:1420/dev/components>.
+Para verlos aislados, con todas sus variantes: `pnpm workbench` (ventana de Tauri) o
+`pnpm workbench:web` (navegador). Ver [testing.md](testing.md) §4.
 
 ```svelte
 <script lang="ts">
@@ -62,9 +63,16 @@ Convenciones comunes de los controles de formulario:
       (`.bs-control`, `.bs-popover`, `.bs-option`, `.bs-segment`, `.bs-toggle`, `.bs-dialog`…).
     - Lo exclusivo de un componente va en su `<style>` como `:global(.bs-<nombre>)`, con un
       comentario que lo justifique. Las clases `bs-*` solo se usan dentro de `components/ui/`.
-- Íconos: `@lucide/svelte`, importados uno a uno para que solo se empaquete lo usado:
-  `import ServerIcon from '@lucide/svelte/icons/server';`. Su tamaño y color salen de los tokens
-  (`--icon-size-*`, `currentColor`); nunca se les pasa `size` ni `color`.
+- Íconos, dos sets con papeles distintos:
+    - **Lucide** (`@lucide/svelte`), set por defecto de la interfaz (controles, acciones,
+      navegación), por su trazo uniforme: `import ServerIcon from '@lucide/svelte/icons/server';`.
+    - **Font Awesome Free** (`@fortawesome/free-{solid,regular,brands}-svg-icons`) con
+      `<FaIcon icon={faGithub} />`: sobre todo **marcas** (GitHub, distribuciones Linux, runtimes),
+      que Lucide no tiene, y glifos rellenos puntuales. No se mezclan ambos sets en un mismo grupo
+      de controles. `FaIcon` dibuja el SVG sin `fontawesome-svg-core` (sin CSS inyectado) y solo se
+      empaquetan los íconos importados.
+    - Su tamaño y color salen de los tokens (`--icon-size-*`, `currentColor`); nunca se les pasa
+      un tamaño en píxeles ni un color.
 - Todo texto visible sale de `t()`, también los `aria-label` internos.
 
 ## 4. Cliente HTTP (`$lib/http`)
@@ -104,10 +112,9 @@ try {
 
 ## 5. Tests
 
-`pnpm test` ejecuta `src/**/*.test.ts` con el runner nativo de Node (`node --test`), sin
-dependencias. Es para lógica pura (cliente HTTP, traducción, utilidades): los módulos que se
-prueban no pueden importar runes ni `$lib` en tiempo de ejecución, y los tests importan con
-extensión `.ts`. `pnpm check` incluye los tests.
+Tests unitarios, de componente, E2E, de accesibilidad y visuales, y el Workbench: ver
+[testing.md](testing.md). Todo componente nuevo lleva sus tests y sus historias (`stories/`),
+organizados según [testing.md](testing.md) §5.
 
 ## 6. Dependencias (cadena de suministro)
 

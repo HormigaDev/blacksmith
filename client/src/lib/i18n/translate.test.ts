@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { expect, test } from 'vitest';
 
-import { translate } from './translate.ts';
-import type { Translation } from './types.ts';
+import { translate } from './translate';
+import type { Translation } from './types';
 
 const base = {
     hello: 'Hola, {name}',
@@ -10,8 +9,8 @@ const base = {
     nested: { only: 'Solo en base' },
 };
 
+// Árboles de prueba, ajenos a los mensajes reales de la app.
 const run = (messages: object, locale: string, key: string, params?: Record<string, string | number>) =>
-    // Árboles de prueba, ajenos a los mensajes reales de la app.
     translate(
         messages as Translation,
         base as Translation,
@@ -22,21 +21,21 @@ const run = (messages: object, locale: string, key: string, params?: Record<stri
     );
 
 test('interpola parámetros', () => {
-    assert.equal(run(base, 'es', 'hello', { name: 'Ana' }), 'Hola, Ana');
+    expect(run(base, 'es', 'hello', { name: 'Ana' })).toBe('Hola, Ana');
 });
 
 test('elige la forma plural y formatea el número según el idioma', () => {
-    assert.equal(run(base, 'es', 'servers', { count: 1 }), '1 servidor');
-    assert.equal(run(base, 'es', 'servers', { count: 12000 }), '12.000 servidores');
+    expect(run(base, 'es', 'servers', { count: 1 })).toBe('1 servidor');
+    expect(run(base, 'es', 'servers', { count: 12000 })).toBe('12.000 servidores');
     const en = { servers: { one: '{count} server', other: '{count} servers' } };
-    assert.equal(run(en, 'en', 'servers', { count: 12000 }), '12,000 servers');
+    expect(run(en, 'en', 'servers', { count: 12000 })).toBe('12,000 servers');
 });
 
 test('usa el idioma base cuando falta la traducción o tiene otra forma', () => {
-    assert.equal(run({}, 'en', 'nested.only'), 'Solo en base');
-    assert.equal(run({ servers: 'texto en lugar de plural' }, 'en', 'servers', { count: 2 }), '2 servidores');
+    expect(run({}, 'en', 'nested.only')).toBe('Solo en base');
+    expect(run({ servers: 'texto en lugar de plural' }, 'en', 'servers', { count: 2 })).toBe('2 servidores');
 });
 
 test('una clave inexistente se muestra tal cual, para que el fallo sea visible', () => {
-    assert.equal(run(base, 'es', 'no.existe'), 'no.existe');
+    expect(run(base, 'es', 'no.existe')).toBe('no.existe');
 });

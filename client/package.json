@@ -3,22 +3,40 @@
     "version": "0.1.0",
     "description": "Cliente de escritorio de BBEL Blacksmith",
     "type": "module",
+    "packageManager": "pnpm@11.0.9",
+    "engines": {
+        "node": "24.14.0"
+    },
     "scripts": {
         "dev": "vite dev",
         "build": "vite build",
         "preview": "vite preview",
+        "workbench": "tauri dev --config src-tauri/tauri.workbench.conf.json",
+        "workbench:web": "vite dev --open /dev/workbench",
         "prepare": "svelte-kit sync || echo ''",
-        "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && pnpm check:styles && pnpm check:i18n && pnpm test && pnpm format:check",
+        "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && pnpm check:styles && pnpm check:structure && pnpm check:i18n && pnpm test && pnpm format:check",
         "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
         "check:styles": "node scripts/check-styles.mjs",
+        "check:i18n": "node scripts/check-i18n.mjs",
+        "check:structure": "node scripts/check-structure.mjs",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "test:unit": "vitest run --project unit",
+        "test:component": "vitest run --project component",
+        "test:e2e": "pnpm build && playwright test --project='app-*' --project=workbench",
+        "test:e2e:app": "pnpm build && playwright test --project='app-*'",
+        "test:visual": "playwright test --project=visual",
+        "test:visual:update": "playwright test --project=visual --update-snapshots",
+        "test:all": "pnpm test && pnpm test:e2e",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
-        "tauri": "tauri",
-        "check:i18n": "node scripts/check-i18n.mjs",
-        "test": "node --test \"src/**/*.test.ts\""
+        "tauri": "tauri"
     },
     "license": "MIT",
     "dependencies": {
+        "@fortawesome/free-brands-svg-icons": "7.3.1",
+        "@fortawesome/free-regular-svg-icons": "7.3.1",
+        "@fortawesome/free-solid-svg-icons": "7.3.1",
         "@internationalized/date": "3.12.4",
         "@lucide/svelte": "1.57.0",
         "@tauri-apps/api": "2.12.3",
@@ -27,17 +45,26 @@
         "bits-ui": "2.19.5"
     },
     "devDependencies": {
+        "@axe-core/playwright": "4.13.0",
+        "@fortawesome/fontawesome-common-types": "7.3.1",
+        "@playwright/test": "1.64.1",
         "@sveltejs/adapter-static": "^3.0.10",
         "@sveltejs/kit": "^2.65.1",
         "@sveltejs/vite-plugin-svelte": "^7.1.2",
         "@tauri-apps/cli": "2.12.2",
         "@types/node": "24.19.2",
+        "@vitest/browser": "5.0.4",
+        "@vitest/browser-playwright": "5.0.4",
+        "@vitest/mocker": "5.0.4",
+        "playwright": "1.64.1",
         "prettier": "^3.9.10",
         "prettier-plugin-svelte": "^4.1.1",
         "svelte": "^5.56.3",
         "svelte-check": "^4.6.0",
         "typescript": "~6.0.3",
-        "vite": "^8.0.16"
+        "vite": "^8.0.16",
+        "vitest": "5.0.4",
+        "vitest-browser-svelte": "3.1.0"
     },
     "private": true
 }

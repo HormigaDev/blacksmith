@@ -5,6 +5,7 @@ export { default as Checkbox } from './Checkbox.svelte';
 export { default as ConfirmDialog } from './ConfirmDialog.svelte';
 export { default as DatePicker } from './DatePicker.svelte';
 export { default as Dialog } from './Dialog.svelte';
+export { default as FaIcon } from './FaIcon.svelte';
 export { default as Field } from './Field.svelte';
 export { default as FilePicker } from './FilePicker.svelte';
 export { default as Input } from './Input.svelte';

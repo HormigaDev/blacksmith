@@ -123,9 +123,10 @@ function walk(dir) {
     });
 }
 
-// El grupo de rutas (dev) son herramientas internas que no existen en producción.
-const DEV_ROUTES = join(SRC, 'routes', '(dev)');
-for (const file of walk(SRC).filter((path) => extname(path) === '.svelte' && !path.startsWith(DEV_ROUTES))) {
+// Herramientas que solo existen en desarrollo: rutas (dev), el Workbench y sus historias.
+const DEV_ONLY = [join(SRC, 'routes', '(dev)'), join(SRC, 'lib', 'workbench')];
+const isDevOnly = (path) => path.endsWith('.stories.svelte') || DEV_ONLY.some((dir) => path.startsWith(dir));
+for (const file of walk(SRC).filter((path) => extname(path) === '.svelte' && !isDevOnly(path))) {
     const source = readFileSync(file, 'utf8');
     let markup = source
         .replace(/<script[\s\S]*?<\/script>/g, blank)

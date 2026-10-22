@@ -52,6 +52,9 @@
         onValueChange,
     }: Props = $props();
 
+    const uid = $props.id();
+    const labelId = `file-${uid}-label`;
+
     let zone = $state<HTMLElement>();
     let fallbackInput = $state<HTMLInputElement>();
     let dragging = $state(false);
@@ -135,11 +138,16 @@
     });
 </script>
 
-<Field {label} {hideLabel} {hint} {error} {required}>
-    {#snippet children({ id, describedBy, invalid })}
+<!-- La etiqueta nombra la zona (un grupo), no el botón: el botón conserva su propio nombre. -->
+<Field {label} {hideLabel} {hint} {error} {required} {labelId}>
+    {#snippet children({ describedBy, invalid })}
         <div
             bind:this={zone}
             class="zone"
+            role="group"
+            aria-labelledby={labelId}
+            aria-disabled={disabled || undefined}
+            aria-describedby={describedBy}
             class:dragging
             class:invalid
             class:disabled
@@ -155,7 +163,7 @@
                     {multiple ? t('components.filePicker.dropFiles') : t('components.filePicker.dropFile')}
                 {/if}
             </p>
-            <Button {id} size="sm" {disabled} aria-describedby={describedBy} onclick={browse}>
+            <Button size="sm" {disabled} onclick={browse}>
                 {directory
                     ? t('components.filePicker.browseDirectory')
                     : multiple

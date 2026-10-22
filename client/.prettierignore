@@ -4,3 +4,8 @@ node_modules
 src-tauri
 target
 pnpm-lock.yaml
+test-results
+playwright-report
+blob-report
+e2e/__screenshots__
+e2e/fixtures

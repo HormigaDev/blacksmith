@@ -12,6 +12,14 @@ const config = {
         adapter: adapter({
             fallback: 'index.html',
         }),
+        typescript: {
+            // Un solo proyecto de TypeScript: el editor, svelte-check y `pnpm check` también cubren
+            // los tests E2E y la configuración de Playwright, que viven fuera de src/.
+            config: (tsconfig) => {
+                tsconfig.include.push('../playwright.config.ts', '../e2e/**/*.ts');
+                return tsconfig;
+            },
+        },
     },
 };
 

@@ -8,10 +8,19 @@ Tauri 2 + SvelteKit (Svelte 5, modo SPA con `adapter-static`). Plataformas: Linu
 pnpm install
 pnpm tauri dev      # aplicación de escritorio
 pnpm dev            # solo el frontend, en el navegador (http://localhost:1420)
-pnpm check          # tipos, reglas de estilo y formato
+pnpm workbench      # componentes aislados, en una ventana
+pnpm check          # tipos, estilos, i18n, tests y formato
+pnpm test:e2e       # E2E, accesibilidad (Playwright)
 pnpm format
 pnpm tauri build    # paquetes deb, rpm, AppImage, NSIS y MSI
 ```
+
+## Documentación
+
+- [docs/styles.md](docs/styles.md): tokens, temas y estilos.
+- [docs/i18n.md](docs/i18n.md): textos e idiomas.
+- [docs/components.md](docs/components.md): componentes, HTTP y dependencias.
+- [docs/testing.md](docs/testing.md): tests y Workbench.
 
 ## Estilos y temas
 
