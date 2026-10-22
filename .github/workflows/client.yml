@@ -1,26 +1,30 @@
 # CI del cliente. Es también el ENTORNO CANÓNICO de la regresión visual: las capturas de
-# referencia (client/e2e/__screenshots__) se validan aquí en cada cambio y, si hay que
-# regenerarlas, se generan aquí (workflow_dispatch con update_snapshots). Ver client/docs/testing.md.
+# referencia (client/e2e/__screenshots__) se validan y, si hace falta, se regeneran aquí.
+# Ver client/docs/testing.md.
+#
+# Solo manual (Actions → client → Run workflow): es pesado y los minutos de Actions en repos
+# privados son limitados. Lánzalo antes de fusionar o publicar, no en cada commit.
 #
 # Las acciones se fijan por SHA de commit (las etiquetas se pueden mover): actualizar a conciencia.
 name: client
 
 on:
-    push:
-        branches: [master]
-        paths: ['client/**', 'shared/**', '.github/workflows/client.yml']
-    pull_request:
-        paths: ['client/**', 'shared/**', '.github/workflows/client.yml']
     workflow_dispatch:
         inputs:
+            suites:
+                description: 'Qué ejecutar'
+                type: choice
+                default: todo
+                options: [todo, check, e2e, visual]
             update_snapshots:
-                description: 'Regenerar las capturas de referencia (se publican como artefacto)'
+                description: 'Regenerar las capturas de referencia (requiere "todo" o "visual"; se publican como artefacto)'
                 type: boolean
                 default: false
 
 permissions:
     contents: read
 
+# Una ejecución nueva sobre la misma rama cancela la anterior: no se pagan minutos dos veces.
 concurrency:
     group: client-${{ github.ref }}
     cancel-in-progress: true
@@ -35,6 +39,7 @@ env:
 jobs:
     check:
         name: Tipos, estilos, i18n y tests (unitarios + componentes)
+        if: ${{ inputs.suites == 'todo' || inputs.suites == 'check' }}
         runs-on: ubuntu-24.04
         timeout-minutes: 20
         steps:
@@ -53,6 +58,7 @@ jobs:
 
     e2e:
         name: E2E (Chromium + WebKit) y accesibilidad
+        if: ${{ inputs.suites == 'todo' || inputs.suites == 'e2e' }}
         runs-on: ubuntu-24.04
         timeout-minutes: 30
         steps:
@@ -77,6 +83,7 @@ jobs:
 
     visual:
         name: Regresión visual (entorno canónico)
+        if: ${{ inputs.suites == 'todo' || inputs.suites == 'visual' }}
         runs-on: ubuntu-24.04
         timeout-minutes: 30
         steps:

@@ -104,12 +104,18 @@ Verificado: con las fuentes del sistema sustituidas por otras completamente dist
 una configuración de rasterizado opuesta (hinting completo, subpíxel RGB), las 96 capturas
 coinciden píxel a píxel.
 
-**Entorno canónico: la CI** (`.github/workflows/client.yml`, job `visual`, `ubuntu-24.04`). Es
-la que valida en cada cambio. Para regenerar las referencias tras un cambio visual intencionado:
+**Entorno canónico: la CI** (`.github/workflows/client.yml`, job `visual`, `ubuntu-24.04`).
+El workflow es **solo manual** (Actions → `client` → _Run workflow_), porque es pesado y los
+minutos de Actions en repos privados son limitados: se lanza antes de fusionar o publicar, no
+en cada commit. El selector `suites` elige qué ejecutar (`todo`, `check`, `e2e` o `visual`).
+En el día a día, la validación es local: `pnpm check` y, si se tocó la interfaz,
+`pnpm test:e2e` y `pnpm test:visual`.
+
+Para regenerar las referencias tras un cambio visual intencionado:
 
 - En una máquina Linux: `pnpm test:visual:update`, revisar las imágenes en el diff y confirmar.
-- Desde cualquier sistema: lanzar el workflow `client` a mano con `update_snapshots`, descargar
-  el artefacto `visual-snapshots` y confirmarlo en `e2e/__screenshots__`.
+- Desde cualquier sistema: lanzar el workflow con `suites` = `visual` y `update_snapshots`,
+  descargar el artefacto `visual-snapshots` y confirmarlo en `e2e/__screenshots__`.
 
 Si falla en la CI, el artefacto `visual-diff` contiene la captura esperada, la obtenida y la
 diferencia.
