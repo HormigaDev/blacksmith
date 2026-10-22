@@ -15,6 +15,8 @@ CREATE TABLE services (
                    AND slug NOT GLOB '*[^a-z0-9-]*'
                    AND slug NOT GLOB '-*'
                    AND slug NOT GLOB '*-'
+                   -- Reservado (PERMISSION_PROBE_SLUG).
+                   AND slug <> 'agent-permission-check'
                ),
     name       TEXT    NOT NULL CHECK (length(name) BETWEEN 1 AND 100),
     -- Segundos Unix (UTC).

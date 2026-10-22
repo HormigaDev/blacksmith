@@ -1,4 +1,4 @@
-//! Invocación segura de `systemctl` para el ciclo de vida de los servicios.
+//! Invocación segura de `systemctl`: ciclo de vida de los servicios y consulta de su PID.
 //!
 //! - Sin shell: el binario y cada argumento se pasan por separado con [`std::process::Command`],
 //!   así que ningún carácter del nombre de unidad se interpreta.
@@ -6,7 +6,7 @@
 //!   `LC_ALL=C` fija el idioma de los mensajes, que es lo que permite clasificar los errores.
 //! - `--no-ask-password`: sin autorización falla al momento en lugar de esperar una contraseña.
 //! - `--` antes del nombre: aunque [`UnitName`] ya lo impide, nada puede leerse como opción.
-//! - Salida de error acotada y tiempo máximo: si se agota, el proceso se mata.
+//! - Salidas acotadas y tiempo máximo: si se agota, el proceso se mata.
 //!
 //! El código de salida no basta para clasificar: polkit rechaza antes de mirar si la unidad
 //! existe y casi todos los fallos salen con 1. Se clasifica por el mensaje (verificado contra
@@ -19,7 +19,12 @@ use std::{
     time::Duration,
 };
 
-use tokio::io::AsyncReadExt;
+use rustix::process::Pid;
+use shared::{ActiveState, LoadState};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt},
+    process::Child,
+};
 
 use super::UnitName;
 
@@ -30,8 +35,11 @@ pub const SYSTEMCTL_PATH: &str = "/usr/bin/systemctl";
 /// fallido antes de que se agote este tiempo.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Bytes de la salida de error que se conservan; el resto se descarta sin almacenarlo.
-const STDERR_LIMIT: u64 = 4 * 1024;
+/// Las consultas no esperan a ningún trabajo de systemd: si tardan más, algo va mal.
+const QUERY_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Bytes que se conservan de cada salida; el resto se descarta sin almacenarlo.
+const OUTPUT_LIMIT: u64 = 4 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Action {
@@ -41,14 +49,6 @@ pub enum Action {
 }
 
 impl Action {
-    fn verb(self) -> &'static str {
-        match self {
-            Self::Start => "start",
-            Self::Stop => "stop",
-            Self::Restart => "restart",
-        }
-    }
-
     fn outcome(self) -> Outcome {
         match self {
             Self::Start => Outcome::Started,
@@ -59,6 +59,45 @@ impl Action {
 }
 
 impl fmt::Display for Action {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Operation::from(*self).fmt(f)
+    }
+}
+
+/// Lo que se estaba haciendo cuando falló `systemctl`: una acción o una consulta.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Operation {
+    Start,
+    Stop,
+    Restart,
+    /// `show -p MainPID --value`.
+    ShowMainPid,
+    /// `show -p LoadState -p ActiveState -p SubState -p MainPID`.
+    ShowStatus,
+}
+
+impl Operation {
+    fn verb(self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::Stop => "stop",
+            Self::Restart => "restart",
+            Self::ShowMainPid | Self::ShowStatus => "show",
+        }
+    }
+}
+
+impl From<Action> for Operation {
+    fn from(action: Action) -> Self {
+        match action {
+            Action::Start => Self::Start,
+            Action::Stop => Self::Stop,
+            Action::Restart => Self::Restart,
+        }
+    }
+}
+
+impl fmt::Display for Operation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.verb())
     }
@@ -76,7 +115,8 @@ pub enum Outcome {
 /// Gestor de servicios al que se dirigen las acciones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Scope {
-    /// Servicios del sistema (`/etc/systemd/system`). Requiere autorización de polkit.
+    /// Servicios del sistema (`/etc/systemd/system`). Las acciones requieren autorización de
+    /// polkit; las consultas no.
     #[default]
     System,
     /// Servicios del propio usuario (`systemctl --user`). Necesita su bus de sesión.
@@ -88,29 +128,36 @@ pub enum SystemctlError {
     #[error("la unidad {unit} no existe")]
     UnitNotFound { unit: UnitName },
 
-    #[error("sin permisos para {action} {unit}")]
-    PermissionDenied { action: Action, unit: UnitName },
+    #[error("sin permisos para {operation} {unit}")]
+    PermissionDenied {
+        operation: Operation,
+        unit: UnitName,
+    },
 
     #[error("la unidad {unit} está enmascarada")]
     UnitMasked { unit: UnitName },
 
     /// `RefuseManualStart=` / `RefuseManualStop=`: solo se activa como dependencia.
-    #[error("la unidad {unit} no admite {action} manual")]
-    ManualOperationRefused { action: Action, unit: UnitName },
+    #[error("la unidad {unit} no admite {operation} manual")]
+    ManualOperationRefused {
+        operation: Operation,
+        unit: UnitName,
+    },
 
     /// systemd ejecutó el trabajo y el servicio falló (proceso que termina con error, timeout de
     /// arranque…). Los detalles están en el journal de la unidad.
-    #[error("{action} de {unit} falló: {detail}")]
+    #[error("{operation} de {unit} falló: {detail}")]
     JobFailed {
-        action: Action,
+        operation: Operation,
         unit: UnitName,
         detail: String,
     },
 
-    /// El trabajo puede seguir en curso en systemd: matar `systemctl` no lo cancela.
-    #[error("{action} de {unit} no terminó en {after:?}")]
+    /// En una acción, el trabajo puede seguir en curso en systemd: matar `systemctl` no lo
+    /// cancela.
+    #[error("{operation} de {unit} no terminó en {after:?}")]
     Timeout {
-        action: Action,
+        operation: Operation,
         unit: UnitName,
         after: Duration,
     },
@@ -118,14 +165,39 @@ pub enum SystemctlError {
     #[error("no se pudo ejecutar systemctl")]
     Io(#[source] io::Error),
 
+    /// `systemctl` terminó bien pero su salida no tiene el formato esperado.
+    #[error("{operation} de {unit} devolvió una salida inesperada: {output:?}")]
+    UnexpectedOutput {
+        operation: Operation,
+        unit: UnitName,
+        output: String,
+    },
+
     /// Cualquier otro fallo, con el código de salida (`None` si terminó por una señal).
-    #[error("systemctl terminó con {status:?} al ejecutar {action} de {unit}: {detail}")]
+    #[error("systemctl terminó con {status:?} al ejecutar {operation} de {unit}: {detail}")]
     Failed {
-        action: Action,
+        operation: Operation,
         unit: UnitName,
         status: Option<i32>,
         detail: String,
     },
+}
+
+/// Estado de una unidad según systemd.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnitStatus {
+    pub load_state: LoadState,
+    pub active_state: ActiveState,
+    pub sub_state: String,
+    /// Como en [`Systemctl::main_pid`]: `None` si no hay proceso principal.
+    pub main_pid: Option<Pid>,
+}
+
+/// Salida de una ejecución de `systemctl`, ya acotada.
+struct Execution {
+    status: ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
 }
 
 /// Cliente de `systemctl`. Es barato de clonar y no guarda estado entre llamadas.
@@ -165,34 +237,7 @@ impl Systemctl {
     }
 
     pub async fn run(&self, action: Action, unit: &UnitName) -> Result<Outcome, SystemctlError> {
-        let mut command = self.command(action, unit);
-        let mut child = command.spawn().map_err(SystemctlError::Io)?;
-        let stderr = child.stderr.take();
-
-        // `async move`: si se agota el tiempo, el futuro se descarta con el hijo dentro y
-        // `kill_on_drop` lo mata.
-        let wait = async move {
-            let mut captured = Vec::new();
-            if let Some(stderr) = stderr {
-                let mut limited = stderr.take(STDERR_LIMIT);
-                limited.read_to_end(&mut captured).await?;
-                // Se vacía el resto para que el hijo no se bloquee con la tubería llena.
-                tokio::io::copy(&mut limited.into_inner(), &mut tokio::io::sink()).await?;
-            }
-            let status = child.wait().await?;
-            Ok::<_, io::Error>((status, captured))
-        };
-
-        let (status, stderr) = tokio::time::timeout(self.timeout, wait)
-            .await
-            .map_err(|_| SystemctlError::Timeout {
-                action,
-                unit: unit.clone(),
-                after: self.timeout,
-            })?
-            .map_err(SystemctlError::Io)?;
-
-        let result = interpret(action, unit, status, &stderr);
+        let result = self.run_unlogged(action, unit).await;
         match &result {
             Ok(outcome) => {
                 tracing::info!(%unit, %action, ?outcome, "acción de servicio completada")
@@ -202,7 +247,114 @@ impl Systemctl {
         result
     }
 
-    fn command(&self, action: Action, unit: &UnitName) -> tokio::process::Command {
+    /// Como [`Systemctl::run`], sin registrar el resultado (para la comprobación de permisos al
+    /// arrancar, cuyo «fallo» esperado no debe aparecer como una acción fallida).
+    pub(crate) async fn run_unlogged(
+        &self,
+        action: Action,
+        unit: &UnitName,
+    ) -> Result<Outcome, SystemctlError> {
+        let operation = Operation::from(action);
+        let execution = self.execute(operation, &[], unit, self.timeout).await?;
+        if execution.status.success() {
+            Ok(action.outcome())
+        } else {
+            Err(classify(
+                operation,
+                unit,
+                execution.status,
+                &execution.stderr,
+            ))
+        }
+    }
+
+    /// PID del proceso principal del servicio (`systemctl show -p MainPID --value`), o `None`
+    /// si no tiene: detenido, fallido, `Type=oneshot` ya terminado… systemd devuelve `0` en
+    /// todos esos casos, y también para una unidad que no existe, así que `None` no distingue
+    /// entre ellos (para un servicio registrado, significa «no hay proceso que medir»).
+    ///
+    /// No requiere polkit: es una lectura.
+    pub async fn main_pid(&self, unit: &UnitName) -> Result<Option<Pid>, SystemctlError> {
+        let operation = Operation::ShowMainPid;
+        let timeout = self.timeout.min(QUERY_TIMEOUT);
+        let execution = self
+            .execute(operation, &["-p", "MainPID", "--value"], unit, timeout)
+            .await?;
+        if !execution.status.success() {
+            return Err(classify(
+                operation,
+                unit,
+                execution.status,
+                &execution.stderr,
+            ));
+        }
+        parse_main_pid(&execution.stdout).ok_or_else(|| SystemctlError::UnexpectedOutput {
+            operation,
+            unit: unit.clone(),
+            output: String::from_utf8_lossy(&execution.stdout).into_owned(),
+        })
+    }
+
+    /// Estado de la unidad en una sola llamada. A diferencia de [`Systemctl::main_pid`],
+    /// distingue una unidad inexistente (`LoadState::NotFound`). No requiere polkit.
+    pub async fn status(&self, unit: &UnitName) -> Result<UnitStatus, SystemctlError> {
+        let operation = Operation::ShowStatus;
+        let timeout = self.timeout.min(QUERY_TIMEOUT);
+        let options = [
+            "-p",
+            "LoadState",
+            "-p",
+            "ActiveState",
+            "-p",
+            "SubState",
+            "-p",
+            "MainPID",
+        ];
+        let execution = self.execute(operation, &options, unit, timeout).await?;
+        if !execution.status.success() {
+            return Err(classify(
+                operation,
+                unit,
+                execution.status,
+                &execution.stderr,
+            ));
+        }
+        parse_status(&execution.stdout).ok_or_else(|| SystemctlError::UnexpectedOutput {
+            operation,
+            unit: unit.clone(),
+            output: String::from_utf8_lossy(&execution.stdout).into_owned(),
+        })
+    }
+
+    async fn execute(
+        &self,
+        operation: Operation,
+        options: &[&str],
+        unit: &UnitName,
+        timeout: Duration,
+    ) -> Result<Execution, SystemctlError> {
+        let mut child = self
+            .command(operation, options, unit)
+            .spawn()
+            .map_err(SystemctlError::Io)?;
+        // `async move`: si se agota el tiempo, el futuro se descarta con el hijo dentro y
+        // `kill_on_drop` lo mata.
+        tokio::time::timeout(timeout, async move { collect(&mut child).await })
+            .await
+            .map_err(|_| SystemctlError::Timeout {
+                operation,
+                unit: unit.clone(),
+                after: timeout,
+            })?
+            .map_err(SystemctlError::Io)
+    }
+
+    fn command(
+        &self,
+        operation: Operation,
+        options: &[&str],
+        unit: &UnitName,
+    ) -> tokio::process::Command {
         let mut command = std::process::Command::new(&self.program);
         command
             .env_clear()
@@ -219,10 +371,12 @@ impl Systemctl {
             command.arg("--user");
         }
         command
-            .args(["--no-ask-password", "--no-pager", action.verb(), "--"])
+            .args(["--no-ask-password", "--no-pager", operation.verb()])
+            .args(options)
+            .arg("--")
             .arg(unit.as_str())
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
         let mut command = tokio::process::Command::from(command);
@@ -231,17 +385,115 @@ impl Systemctl {
     }
 }
 
-/// Traduce el código de salida y la salida de error (`LC_ALL=C`) a un resultado tipado.
-fn interpret(
-    action: Action,
+/// Lee ambas salidas a la vez (si se leyeran por turnos, el hijo podría bloquearse escribiendo
+/// en la otra tubería llena) y espera a que termine.
+async fn collect(child: &mut Child) -> io::Result<Execution> {
+    let (stdout, stderr) = tokio::try_join!(
+        read_limited(child.stdout.take()),
+        read_limited(child.stderr.take()),
+    )?;
+    Ok(Execution {
+        status: child.wait().await?,
+        stdout,
+        stderr,
+    })
+}
+
+/// Conserva como mucho [`OUTPUT_LIMIT`] bytes y vacía el resto.
+async fn read_limited(pipe: Option<impl AsyncRead + Unpin>) -> io::Result<Vec<u8>> {
+    let mut captured = Vec::new();
+    if let Some(pipe) = pipe {
+        let mut limited = pipe.take(OUTPUT_LIMIT);
+        limited.read_to_end(&mut captured).await?;
+        tokio::io::copy(&mut limited.into_inner(), &mut tokio::io::sink()).await?;
+    }
+    Ok(captured)
+}
+
+/// Salida de `show -p MainPID --value`: un entero decimal y un salto de línea. `0` o vacío
+/// significan que no hay proceso principal. Cualquier otra cosa es `None` del `Option` externo
+/// (salida inesperada).
+fn parse_main_pid(stdout: &[u8]) -> Option<Option<Pid>> {
+    let value = stdout.strip_suffix(b"\n").unwrap_or(stdout);
+    if value.is_empty() {
+        return Some(None);
+    }
+    if !value.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    let pid: i32 = std::str::from_utf8(value).ok()?.parse().ok()?;
+    // `from_raw` devuelve `None` para 0; los negativos no llegan aquí (solo dígitos).
+    Some(Pid::from_raw(pid))
+}
+
+/// Salida de `show -p …` sin `--value`: una línea `Clave=Valor` por propiedad, en el orden
+/// interno de systemd (no en el de los argumentos). Cada clave pedida debe aparecer una vez.
+fn parse_status(stdout: &[u8]) -> Option<UnitStatus> {
+    let text = std::str::from_utf8(stdout).ok()?;
+    let (mut load, mut active, mut sub, mut pid) = (None, None, None, None);
+    for line in text.lines() {
+        let (key, value) = line.split_once('=')?;
+        let slot = match key {
+            "LoadState" => &mut load,
+            "ActiveState" => &mut active,
+            "SubState" => &mut sub,
+            "MainPID" => &mut pid,
+            _ => return None,
+        };
+        if slot.replace(value).is_some() {
+            return None;
+        }
+    }
+    let sub_state = sub?;
+    if sub_state.is_empty()
+        || !sub_state
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return None;
+    }
+    Some(UnitStatus {
+        load_state: parse_load_state(load?)?,
+        active_state: parse_active_state(active?)?,
+        sub_state: sub_state.to_owned(),
+        main_pid: parse_main_pid(pid?.as_bytes())?,
+    })
+}
+
+fn parse_load_state(raw: &str) -> Option<LoadState> {
+    Some(match raw {
+        "loaded" => LoadState::Loaded,
+        "not-found" => LoadState::NotFound,
+        "bad-setting" => LoadState::BadSetting,
+        "error" => LoadState::Error,
+        "masked" => LoadState::Masked,
+        "merged" => LoadState::Merged,
+        "stub" => LoadState::Stub,
+        _ => return None,
+    })
+}
+
+fn parse_active_state(raw: &str) -> Option<ActiveState> {
+    Some(match raw {
+        "active" => ActiveState::Active,
+        "reloading" => ActiveState::Reloading,
+        "inactive" => ActiveState::Inactive,
+        "failed" => ActiveState::Failed,
+        "activating" => ActiveState::Activating,
+        "deactivating" => ActiveState::Deactivating,
+        "maintenance" => ActiveState::Maintenance,
+        "refreshing" => ActiveState::Refreshing,
+        _ => return None,
+    })
+}
+
+/// Clasifica un fallo por la salida de error (`LC_ALL=C`) y el código de salida.
+fn classify(
+    operation: Operation,
     unit: &UnitName,
     status: ExitStatus,
     stderr: &[u8],
-) -> Result<Outcome, SystemctlError> {
-    if status.success() {
-        return Ok(action.outcome());
-    }
-
+) -> SystemctlError {
     let text = String::from_utf8_lossy(stderr);
     let detail = text.trim();
     let unit = unit.clone();
@@ -249,26 +501,26 @@ fn interpret(
 
     // Mensajes de systemd 255 (src/systemctl/systemctl-start-unit.c y bus-wait-for-jobs.c).
     if detail.contains("Interactive authentication required") || detail.contains("Access denied") {
-        Err(SystemctlError::PermissionDenied { action, unit })
+        SystemctlError::PermissionDenied { operation, unit }
     } else if detail.contains(" not found.") || detail.contains(" not loaded.") || code == Some(5) {
-        Err(SystemctlError::UnitNotFound { unit })
+        SystemctlError::UnitNotFound { unit }
     } else if detail.contains(" is masked.") {
-        Err(SystemctlError::UnitMasked { unit })
+        SystemctlError::UnitMasked { unit }
     } else if detail.contains("Operation refused") {
-        Err(SystemctlError::ManualOperationRefused { action, unit })
+        SystemctlError::ManualOperationRefused { operation, unit }
     } else if detail.starts_with("Job for ") {
-        Err(SystemctlError::JobFailed {
-            action,
+        SystemctlError::JobFailed {
+            operation,
             unit,
             detail: first_line(detail),
-        })
+        }
     } else {
-        Err(SystemctlError::Failed {
-            action,
+        SystemctlError::Failed {
+            operation,
             unit,
             status: code,
             detail: first_line(detail),
-        })
+        }
     }
 }
 
@@ -292,7 +544,12 @@ mod tests {
     }
 
     fn check(code: i32, stderr: &str) -> Result<Outcome, SystemctlError> {
-        interpret(Action::Start, &unit(), exit(code), stderr.as_bytes())
+        Err(classify(
+            Operation::Start,
+            &unit(),
+            exit(code),
+            stderr.as_bytes(),
+        ))
     }
 
     #[test]
@@ -302,7 +559,87 @@ mod tests {
             (Action::Stop, Outcome::Stopped),
             (Action::Restart, Outcome::Restarted),
         ] {
-            assert_eq!(interpret(action, &unit(), exit(0), b"").unwrap(), outcome);
+            assert_eq!(action.outcome(), outcome);
+        }
+    }
+
+    #[test]
+    fn pid_principal() {
+        let pid = |raw: i32| Some(Some(Pid::from_raw(raw).unwrap()));
+        assert_eq!(parse_main_pid(b"85072\n"), pid(85072));
+        assert_eq!(parse_main_pid(b"1\n"), pid(1));
+        assert_eq!(parse_main_pid(b"350"), pid(350));
+        // Detenido: systemd devuelve 0; también se admite vacío.
+        assert_eq!(parse_main_pid(b"0\n"), Some(None));
+        assert_eq!(parse_main_pid(b"\n"), Some(None));
+        assert_eq!(parse_main_pid(b""), Some(None));
+    }
+
+    // Salidas reales de systemd 255 (el orden no es el de los argumentos).
+    #[test]
+    fn estado_de_la_unidad() {
+        let running = parse_status(
+            b"MainPID=94584\nLoadState=loaded\nActiveState=active\nSubState=running\n",
+        )
+        .unwrap();
+        assert_eq!(running.load_state, LoadState::Loaded);
+        assert_eq!(running.active_state, ActiveState::Active);
+        assert_eq!(running.sub_state, "running");
+        assert_eq!(running.main_pid, Pid::from_raw(94584));
+
+        let missing =
+            parse_status(b"MainPID=0\nLoadState=not-found\nActiveState=inactive\nSubState=dead\n")
+                .unwrap();
+        assert_eq!(missing.load_state, LoadState::NotFound);
+        assert_eq!(missing.main_pid, None);
+    }
+
+    #[test]
+    fn estado_con_salida_inesperada() {
+        for raw in [
+            // Falta una propiedad.
+            &b"MainPID=1\nLoadState=loaded\nActiveState=active\n"[..],
+            // Repetida.
+            b"MainPID=1\nMainPID=2\nLoadState=loaded\nActiveState=active\nSubState=running\n",
+            // Desconocida.
+            b"MainPID=1\nLoadState=loaded\nActiveState=active\nSubState=running\nOtra=x\n",
+            // Valor fuera del enum.
+            b"MainPID=1\nLoadState=loaded\nActiveState=dancing\nSubState=running\n",
+            b"MainPID=1\nLoadState=loaded\nActiveState=active\nSubState=run ning\n",
+            b"MainPID=1\nLoadState=loaded\nActiveState=active\nSubState=\n",
+            b"MainPID=x\nLoadState=loaded\nActiveState=active\nSubState=running\n",
+            b"sin igual\n",
+        ] {
+            assert_eq!(
+                parse_status(raw),
+                None,
+                "{:?}",
+                String::from_utf8_lossy(raw)
+            );
+        }
+    }
+
+    #[test]
+    fn pid_principal_con_salida_inesperada() {
+        for raw in [
+            &b"-1\n"[..],
+            b"+5\n",
+            b" 5\n",
+            b"5 \n",
+            b"5\n\n",
+            b"5\n6\n",
+            b"MainPID=5\n",
+            b"abc\n",
+            b"\xff\n",
+            b"2147483648\n",
+            b"99999999999999999999\n",
+        ] {
+            assert_eq!(
+                parse_main_pid(raw),
+                None,
+                "{:?}",
+                String::from_utf8_lossy(raw)
+            );
         }
     }
 
@@ -317,7 +654,7 @@ mod tests {
         assert!(matches!(
             error,
             Err(SystemctlError::PermissionDenied {
-                action: Action::Start,
+                operation: Operation::Start,
                 ..
             })
         ));
@@ -393,16 +730,16 @@ mod tests {
             other => panic!("se esperaba Failed: {other:?}"),
         }
         // Terminado por una señal: sin código.
-        let killed = interpret(Action::Stop, &unit(), ExitStatus::from_raw(9), b"");
+        let killed = classify(Operation::Stop, &unit(), ExitStatus::from_raw(9), b"");
         assert!(matches!(
             killed,
-            Err(SystemctlError::Failed { status: None, .. })
+            SystemctlError::Failed { status: None, .. }
         ));
     }
 
     #[test]
     fn argumentos_y_entorno() {
-        let command = Systemctl::default().command(Action::Restart, &unit());
+        let command = Systemctl::default().command(Operation::Restart, &[], &unit());
         let std = command.as_std();
         assert_eq!(std.get_program(), SYSTEMCTL_PATH);
         let args: Vec<_> = std.get_args().collect();
@@ -422,6 +759,26 @@ mod tests {
             !envs
                 .iter()
                 .any(|(key, _)| *key == "DBUS_SESSION_BUS_ADDRESS")
+        );
+
+        let command = Systemctl::default().command(
+            Operation::ShowMainPid,
+            &["-p", "MainPID", "--value"],
+            &unit(),
+        );
+        let args: Vec<_> = command.as_std().get_args().collect();
+        assert_eq!(
+            args,
+            [
+                "--no-ask-password",
+                "--no-pager",
+                "show",
+                "-p",
+                "MainPID",
+                "--value",
+                "--",
+                "api.service"
+            ]
         );
     }
 }

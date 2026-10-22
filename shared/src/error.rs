@@ -19,6 +19,24 @@ pub enum ErrorCode {
     Overloaded,
     Unavailable,
     Internal,
+
+    // --- Servicios gestionados ---
+    /// El servicio no está registrado en el agente (aunque exista una unidad con ese nombre).
+    ServiceNotFound,
+    /// El servicio está registrado, pero su unidad no existe en systemd.
+    UnitNotFound,
+    UnitMasked,
+    /// La unidad tiene `RefuseManualStart=`/`RefuseManualStop=`.
+    UnitRefusesManualOperation,
+    /// systemd ejecutó la acción y el servicio falló (p. ej. su proceso terminó con error).
+    ServiceJobFailed,
+    /// polkit no autoriza al agente: falta o está mal la regla de `deploy/polkit/`.
+    SystemdPermissionDenied,
+    /// `systemctl` no respondió a tiempo. En una acción, el trabajo puede seguir en curso.
+    SystemdTimeout,
+    /// Cualquier otro fallo al hablar con systemd o al medir el proceso.
+    SystemdFailed,
+
     /// Código emitido por un agente más reciente que este cliente. El agente nunca lo envía.
     #[serde(other)]
     Unknown,
@@ -46,6 +64,81 @@ mod tests {
             serde_json::to_string(&body).unwrap(),
             r#"{"code":"NOT_FOUND","message":"x"}"#
         );
+    }
+
+    /// Todos los códigos que puede enviar el agente. El `match` exhaustivo obliga a actualizar
+    /// esta lista (y con ella el cliente) al añadir una variante.
+    fn sent_by_agent() -> Vec<ErrorCode> {
+        use ErrorCode::*;
+        let all = [
+            BadRequest,
+            InvalidJson,
+            UnsupportedMediaType,
+            PayloadTooLarge,
+            Unauthorized,
+            Forbidden,
+            NotFound,
+            MethodNotAllowed,
+            Conflict,
+            RequestTimeout,
+            Overloaded,
+            Unavailable,
+            Internal,
+            ServiceNotFound,
+            UnitNotFound,
+            UnitMasked,
+            UnitRefusesManualOperation,
+            ServiceJobFailed,
+            SystemdPermissionDenied,
+            SystemdTimeout,
+            SystemdFailed,
+        ];
+        for code in all {
+            match code {
+                BadRequest
+                | InvalidJson
+                | UnsupportedMediaType
+                | PayloadTooLarge
+                | Unauthorized
+                | Forbidden
+                | NotFound
+                | MethodNotAllowed
+                | Conflict
+                | RequestTimeout
+                | Overloaded
+                | Unavailable
+                | Internal
+                | ServiceNotFound
+                | UnitNotFound
+                | UnitMasked
+                | UnitRefusesManualOperation
+                | ServiceJobFailed
+                | SystemdPermissionDenied
+                | SystemdTimeout
+                | SystemdFailed
+                | Unknown => {}
+            }
+        }
+        all.to_vec()
+    }
+
+    /// Regla de CLAUDE.md: cada código está en `API_ERROR_CODES` y tiene su `errors.agent.<CODE>`.
+    #[test]
+    fn el_cliente_conoce_todos_los_codigos() {
+        let client = include_str!("../../client/src/lib/http/client.ts");
+        let messages = include_str!("../../client/src/lib/i18n/messages/es.ts");
+        for code in sent_by_agent() {
+            let name = serde_json::to_value(code).unwrap();
+            let name = name.as_str().unwrap();
+            assert!(
+                client.contains(&format!("'{name}',")),
+                "falta {name} en API_ERROR_CODES"
+            );
+            assert!(
+                messages.contains(&format!("            {name}:")),
+                "falta errors.agent.{name} en es.ts"
+            );
+        }
     }
 
     #[test]

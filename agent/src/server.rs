@@ -7,7 +7,14 @@ use tokio::{
     sync::watch,
 };
 
-use crate::{config::Config, db::Database, http, state::AppState};
+use crate::{
+    config::{Config, Environment},
+    db::Database,
+    error::DisplayChain,
+    http,
+    services::{PermissionCheck, ServiceManager},
+    state::AppState,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServerError {
@@ -36,7 +43,9 @@ pub async fn run(config: Arc<Config>, db: Database) -> Result<(), ServerError> {
         .map_err(|source| ServerError::Bind { addr, source })?;
 
     let (draining, drain_signal) = watch::channel(false);
-    let app = http::router(AppState::new(Arc::clone(&config), db));
+    let state = AppState::new(Arc::clone(&config), db);
+    let services = state.services.clone();
+    let app = http::router(state);
     let server = axum::serve(listener, app)
         .with_graceful_shutdown(wait_for_drain(drain_signal))
         .into_future();
@@ -50,6 +59,9 @@ pub async fn run(config: Arc<Config>, db: Database) -> Result<(), ServerError> {
         "agente escuchando"
     );
     notify_systemd(NotifyState::Ready);
+    // En segundo plano: no retrasa el arranque ni lo impide (estado y métricas no necesitan
+    // permisos), pero un fallo de permisos queda en el registro desde el primer momento.
+    tokio::spawn(report_permissions(services, config.environment));
 
     let signal_name = tokio::select! {
         result = &mut server => return result.map_err(ServerError::Serve),
@@ -68,6 +80,28 @@ pub async fn run(config: Arc<Config>, db: Database) -> Result<(), ServerError> {
             tracing::warn!("plazo de drenado agotado; se cortan las conexiones restantes");
             Ok(())
         }
+    }
+}
+
+async fn report_permissions(services: ServiceManager, environment: Environment) {
+    match services.check_permissions().await {
+        PermissionCheck::Authorized => {
+            tracing::info!("polkit autoriza al agente a gestionar sus servicios (bbel-*.service)");
+        }
+        PermissionCheck::Denied if environment == Environment::Development => tracing::warn!(
+            "polkit no autoriza a este usuario: iniciar, parar o reiniciar servicios fallará \
+             (normal en desarrollo; en el servidor, ver README «Permisos del agente»)"
+        ),
+        PermissionCheck::Denied => tracing::error!(
+            "polkit NO autoriza al agente: iniciar, parar o reiniciar servicios fallará con \
+             SYSTEMD_PERMISSION_DENIED. Instale deploy/polkit/10-blacksmith.rules y verifique \
+             con deploy/polkit/verify.sh (README, «Permisos del agente»)"
+        ),
+        PermissionCheck::Inconclusive(error) => tracing::error!(
+            error = %DisplayChain(&error),
+            "no se pudo comprobar si polkit autoriza al agente; las acciones sobre servicios \
+             pueden fallar (README, «Permisos del agente»)"
+        ),
     }
 }
 

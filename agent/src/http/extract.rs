@@ -1,10 +1,15 @@
 use axum::{
-    extract::FromRequest,
+    extract::{FromRequest, FromRequestParts},
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
 
 use crate::error::AppError;
+
+/// `axum::extract::Path` con los rechazos traducidos a [`AppError`].
+#[derive(Debug, Clone, Copy, Default, FromRequestParts)]
+#[from_request(via(axum::extract::Path), rejection(AppError))]
+pub struct Path<T>(pub T);
 
 /// `axum::Json` con los rechazos traducidos a [`AppError`], para que todo error salga con el
 /// mismo formato. Úsese siempre este en lugar de `axum::Json`.

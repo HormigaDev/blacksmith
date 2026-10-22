@@ -1,18 +1,25 @@
 //! Error único de la capa HTTP. Todo lo que sale del agente hacia un cliente pasa por aquí.
 //!
 //! - El cuerpo siempre es un [`ApiErrorBody`] con un [`ErrorCode`] estable del crate `shared`.
-//! - Los errores internos se registran con su cadena completa de causas, pero el cliente solo
-//!   recibe un mensaje genérico: nunca rutas, salidas de comandos ni detalles del sistema.
+//!   El cliente decide por `code`; `message` es diagnóstico.
+//! - Los errores 5xx se registran con su cadena completa de causas.
+//! - [`AppError::Service`] solo lo producen las rutas de administración, que únicamente se
+//!   alcanzan por el túnel SSH (el usuario ya está autenticado): su mensaje es el diagnóstico
+//!   real (p. ej. por qué systemd no pudo arrancar el servicio) para depurar desde el cliente.
+//! - [`AppError::Internal`] solo muestra su contexto (texto fijo del código), nunca la causa:
+//!   es el que usan las rutas públicas (webhooks), donde no debe salir ningún detalle.
 
 use std::{borrow::Cow, error::Error as StdError, fmt};
 
 use axum::{
     Json,
-    extract::rejection::JsonRejection,
+    extract::rejection::{JsonRejection, PathRejection},
     http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use shared::{ApiErrorBody, ErrorCode};
+
+use crate::{services::ServiceError, systemd::SystemctlError};
 
 pub type BoxError = Box<dyn StdError + Send + Sync + 'static>;
 pub type AppResult<T> = Result<T, AppError>;
@@ -24,6 +31,12 @@ pub enum AppError {
 
     #[error("cuerpo JSON rechazado")]
     InvalidJson(#[from] JsonRejection),
+
+    #[error("parámetro de ruta inválido")]
+    InvalidPath(#[from] PathRejection),
+
+    #[error(transparent)]
+    Service(#[from] ServiceError),
 
     #[error("no autenticado")]
     Unauthorized,
@@ -70,6 +83,8 @@ impl AppError {
         match self {
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::InvalidJson(rejection) => rejection.status(),
+            Self::InvalidPath(_) => StatusCode::BAD_REQUEST,
+            Self::Service(error) => service_error(error).0,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Forbidden => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
@@ -92,6 +107,11 @@ impl AppError {
                 };
                 (code, rejection.body_text().into())
             }
+            Self::InvalidPath(rejection) => (ErrorCode::BadRequest, rejection.body_text().into()),
+            Self::Service(error) => {
+                let (_, code, message) = service_error(&error);
+                (code, message.into())
+            }
             Self::Unauthorized => (ErrorCode::Unauthorized, "autenticación requerida".into()),
             Self::Forbidden => (ErrorCode::Forbidden, "acceso denegado".into()),
             Self::NotFound => (ErrorCode::NotFound, "recurso no encontrado".into()),
@@ -103,10 +123,66 @@ impl AppError {
                 "agente saturado; reintente en breve".into(),
             ),
             Self::Unavailable(message) => (ErrorCode::Unavailable, message),
-            Self::Internal { .. } => (ErrorCode::Internal, "error interno del agente".into()),
+            Self::Internal { context, .. } => (
+                ErrorCode::Internal,
+                format!("error interno del agente: {context}").into(),
+            ),
         };
         ApiErrorBody { code, message }
     }
+}
+
+/// Estado, código y mensaje de diagnóstico de un error de servicio.
+fn service_error(error: &ServiceError) -> (StatusCode, ErrorCode, String) {
+    use SystemctlError as E;
+
+    let message = DisplayChain(error).to_string();
+    let (status, code, message) = match error {
+        ServiceError::NotRegistered(_) => {
+            (StatusCode::NOT_FOUND, ErrorCode::ServiceNotFound, message)
+        }
+        ServiceError::Systemctl(error) => match error {
+            E::UnitNotFound { .. } => (
+                StatusCode::CONFLICT,
+                ErrorCode::UnitNotFound,
+                format!("{message}: el servicio está registrado, pero systemd no tiene su unidad"),
+            ),
+            E::UnitMasked { .. } => (StatusCode::CONFLICT, ErrorCode::UnitMasked, message),
+            E::ManualOperationRefused { .. } => (
+                StatusCode::CONFLICT,
+                ErrorCode::UnitRefusesManualOperation,
+                message,
+            ),
+            E::JobFailed { unit, .. } => (
+                StatusCode::BAD_GATEWAY,
+                ErrorCode::ServiceJobFailed,
+                format!("{message} (detalles: journalctl -u {unit})"),
+            ),
+            E::PermissionDenied { .. } => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ErrorCode::SystemdPermissionDenied,
+                format!(
+                    "{message}: polkit no autoriza al agente; instale deploy/polkit/10-blacksmith.rules"
+                ),
+            ),
+            E::Timeout { .. } => (
+                StatusCode::GATEWAY_TIMEOUT,
+                ErrorCode::SystemdTimeout,
+                message,
+            ),
+            E::Io(_) | E::UnexpectedOutput { .. } | E::Failed { .. } => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ErrorCode::SystemdFailed,
+                message,
+            ),
+        },
+        ServiceError::Metrics(_) | ServiceError::Database(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ErrorCode::Internal,
+            message,
+        ),
+    };
+    (status, code, message)
 }
 
 impl IntoResponse for AppError {
@@ -192,6 +268,7 @@ mod tests {
         let (status, body) = body(error).await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(body.code, ErrorCode::Internal);
+        assert_eq!(body.message, "error interno del agente: leyendo la unidad");
         assert!(!body.message.contains("shadow"));
     }
 

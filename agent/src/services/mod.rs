@@ -12,8 +12,13 @@
 
 use std::{fmt, str::FromStr};
 
+use rustix::process::Pid;
+
+use shared::{ServiceActionReport, ServiceOutcome, ServiceStatusReport};
+
 use crate::{
     db::{Database, DbError},
+    metrics::{MetricsError, ProcessSampler},
     systemd::{Action, Outcome, Systemctl, SystemctlError, UnitName},
 };
 
@@ -26,6 +31,11 @@ pub const MANAGED_UNIT_PREFIX: &str = "bbel-";
 pub const MANAGED_UNIT_PATTERN: &str = r"^bbel-[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?\.service$";
 
 const SLUG_MAX_LEN: usize = 48;
+
+/// Nombre reservado para la comprobación de permisos al arrancar
+/// ([`ServiceManager::check_permissions`]): no se puede registrar, así que esa comprobación
+/// nunca actúa sobre un servicio real.
+pub const PERMISSION_PROBE_SLUG: &str = "agent-permission-check";
 
 /// Identificador de un servicio en el registro. Nunca se reutiliza (`AUTOINCREMENT`): un `id`
 /// guardado por el cliente no puede acabar apuntando a otro servicio tras un borrado.
@@ -53,6 +63,8 @@ pub enum InvalidSlug {
     InvalidCharacter,
     #[error("el identificador no puede empezar ni terminar con guion")]
     EdgeHyphen,
+    #[error("el identificador «{PERMISSION_PROBE_SLUG}» está reservado")]
+    Reserved,
 }
 
 impl ServiceSlug {
@@ -71,6 +83,9 @@ impl ServiceSlug {
         }
         if slug.starts_with('-') || slug.ends_with('-') {
             return Err(InvalidSlug::EdgeHyphen);
+        }
+        if slug == PERMISSION_PROBE_SLUG {
+            return Err(InvalidSlug::Reserved);
         }
         Ok(Self(slug.to_owned()))
     }
@@ -155,48 +170,128 @@ pub struct Service {
 pub enum ServiceError {
     /// También cuando la unidad existe en systemd pero no en el registro: para el cliente no
     /// existe.
-    #[error("el servicio {0} no está registrado")]
-    NotRegistered(ServiceId),
+    #[error("el servicio «{0}» no está registrado en el agente")]
+    NotRegistered(ServiceSlug),
 
     #[error(transparent)]
     Systemctl(#[from] SystemctlError),
+
+    #[error("no se pudo medir el proceso")]
+    Metrics(#[from] MetricsError),
 
     #[error(transparent)]
     Database(#[from] DbError),
 }
 
-/// Ciclo de vida de los servicios registrados: resuelve el `id` en el registro y solo entonces
-/// actúa sobre su unidad.
+/// Resultado de [`ServiceManager::check_permissions`].
+#[derive(Debug)]
+pub enum PermissionCheck {
+    /// polkit autoriza al agente a gestionar sus unidades.
+    Authorized,
+    /// polkit lo deniega: toda acción fallará con `SYSTEMD_PERMISSION_DENIED`.
+    Denied,
+    /// No se pudo saber (p. ej. `systemctl` bloqueado por el endurecimiento de la unidad).
+    Inconclusive(SystemctlError),
+}
+
+/// Servicios registrados: resuelve el nombre en el registro y solo entonces actúa sobre su
+/// unidad o consulta su estado.
 #[derive(Debug, Clone)]
 pub struct ServiceManager {
     db: Database,
     systemctl: Systemctl,
+    sampler: ProcessSampler,
 }
 
 impl ServiceManager {
     pub fn new(db: Database, systemctl: Systemctl) -> Self {
-        Self { db, systemctl }
+        Self {
+            db,
+            systemctl,
+            sampler: ProcessSampler::default(),
+        }
     }
 
-    pub async fn start(&self, id: ServiceId) -> Result<Outcome, ServiceError> {
-        self.run(Action::Start, id).await
+    pub async fn start(&self, slug: &ServiceSlug) -> Result<ServiceActionReport, ServiceError> {
+        self.run(Action::Start, slug).await
     }
 
-    pub async fn stop(&self, id: ServiceId) -> Result<Outcome, ServiceError> {
-        self.run(Action::Stop, id).await
+    pub async fn stop(&self, slug: &ServiceSlug) -> Result<ServiceActionReport, ServiceError> {
+        self.run(Action::Stop, slug).await
     }
 
-    pub async fn restart(&self, id: ServiceId) -> Result<Outcome, ServiceError> {
-        self.run(Action::Restart, id).await
+    pub async fn restart(&self, slug: &ServiceSlug) -> Result<ServiceActionReport, ServiceError> {
+        self.run(Action::Restart, slug).await
     }
 
-    async fn run(&self, action: Action, id: ServiceId) -> Result<Outcome, ServiceError> {
-        let service = self
-            .db
-            .service(id)
+    pub async fn run(
+        &self,
+        action: Action,
+        slug: &ServiceSlug,
+    ) -> Result<ServiceActionReport, ServiceError> {
+        let unit = self.registered(slug).await?.slug.unit();
+        let outcome = match self.systemctl.run(action, &unit).await? {
+            Outcome::Started => ServiceOutcome::Started,
+            Outcome::Stopped => ServiceOutcome::Stopped,
+            Outcome::Restarted => ServiceOutcome::Restarted,
+        };
+        Ok(ServiceActionReport {
+            name: slug.to_string(),
+            unit: unit.to_string(),
+            outcome,
+        })
+    }
+
+    /// PID del proceso principal, o `None` si el servicio no tiene uno (ver
+    /// [`Systemctl::main_pid`]).
+    pub async fn main_pid(&self, slug: &ServiceSlug) -> Result<Option<Pid>, ServiceError> {
+        let unit = self.registered(slug).await?.slug.unit();
+        Ok(self.systemctl.main_pid(&unit).await?)
+    }
+
+    /// Estado de systemd y, si hay proceso principal, su consumo.
+    pub async fn status(&self, slug: &ServiceSlug) -> Result<ServiceStatusReport, ServiceError> {
+        let unit = self.registered(slug).await?.slug.unit();
+        let status = self.systemctl.status(&unit).await?;
+        let metrics = match status.main_pid {
+            Some(pid) => self.sampler.sample(pid).await?,
+            None => None,
+        };
+        Ok(ServiceStatusReport {
+            name: slug.to_string(),
+            unit: unit.to_string(),
+            load_state: status.load_state,
+            active_state: status.active_state,
+            sub_state: status.sub_state,
+            pid: status
+                .main_pid
+                .map(|pid| pid.as_raw_nonzero().get().unsigned_abs()),
+            metrics,
+        })
+    }
+
+    /// Comprueba de verdad, sin efectos, si systemd dejará actuar al agente: pide `stop` de la
+    /// unidad reservada `bbel-agent-permission-check.service`, que no existe. polkit decide
+    /// antes de que systemd busque la unidad, así que la respuesta dice cuál de los dos habló:
+    /// «no cargada» es que polkit lo autorizó; «acceso denegado», que no. Recorre el mismo
+    /// camino que una acción real (endurecimiento de la unidad, D-Bus, polkit y systemd).
+    pub async fn check_permissions(&self) -> PermissionCheck {
+        let unit = UnitName::from_validated(format!(
+            "{MANAGED_UNIT_PREFIX}{PERMISSION_PROBE_SLUG}.service"
+        ));
+        match self.systemctl.run_unlogged(Action::Stop, &unit).await {
+            // Ok: alguien creó esa unidad a mano; aun así, polkit autorizó.
+            Ok(_) | Err(SystemctlError::UnitNotFound { .. }) => PermissionCheck::Authorized,
+            Err(SystemctlError::PermissionDenied { .. }) => PermissionCheck::Denied,
+            Err(error) => PermissionCheck::Inconclusive(error),
+        }
+    }
+
+    async fn registered(&self, slug: &ServiceSlug) -> Result<Service, ServiceError> {
+        self.db
+            .service_by_slug(slug.clone())
             .await?
-            .ok_or(ServiceError::NotRegistered(id))?;
-        Ok(self.systemctl.run(action, &service.slug.unit()).await?)
+            .ok_or_else(|| ServiceError::NotRegistered(slug.clone()))
     }
 }
 
@@ -229,6 +324,7 @@ mod tests {
             ("ñandú", InvalidCharacter),
             ("-app", EdgeHyphen),
             ("app-", EdgeHyphen),
+            (PERMISSION_PROBE_SLUG, Reserved),
         ] {
             assert_eq!(ServiceSlug::new(slug), Err(error), "{slug:?}");
         }

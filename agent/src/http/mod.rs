@@ -3,7 +3,7 @@
 mod extract;
 mod guard;
 
-pub use extract::Json;
+pub use extract::{Json, Path};
 
 use axum::{
     Router,
@@ -11,7 +11,7 @@ use axum::{
     extract::{DefaultBodyLimit, Request},
     http::{HeaderName, HeaderValue, header},
     middleware,
-    routing::get,
+    routing::{get, post},
 };
 use tower::{ServiceBuilder, limit::GlobalConcurrencyLimitLayer};
 use tower_http::{
@@ -36,6 +36,10 @@ pub fn router(state: AppState) -> Router {
     // Superficie de administración: solo alcanzable a través del túnel SSH.
     let admin = Router::new()
         .route("/health", get(routes::health::status))
+        .route("/services/{name}/status", get(routes::services::status))
+        .route("/services/{name}/start", post(routes::services::start))
+        .route("/services/{name}/stop", post(routes::services::stop))
+        .route("/services/{name}/restart", post(routes::services::restart))
         .route_layer(middleware::from_fn(guard::tunnel_only));
 
     // `Router::layer` aplica la pila a cada ruta por separado: por eso el límite de

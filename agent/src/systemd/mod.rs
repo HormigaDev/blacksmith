@@ -13,6 +13,7 @@ mod systemctl;
 mod unit;
 
 pub use systemctl::{
-    Action, DEFAULT_TIMEOUT, Outcome, SYSTEMCTL_PATH, Scope, Systemctl, SystemctlError,
+    Action, DEFAULT_TIMEOUT, Operation, Outcome, SYSTEMCTL_PATH, Scope, Systemctl, SystemctlError,
+    UnitStatus,
 };
 pub use unit::{InvalidUnitName, UnitName};

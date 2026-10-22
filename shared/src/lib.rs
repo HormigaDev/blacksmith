@@ -4,8 +4,13 @@
 //! cliente en lugar de fallar en tiempo de ejecución.
 
 mod error;
+mod services;
 
 pub use error::{ApiErrorBody, ErrorCode};
+pub use services::{
+    ActiveState, LoadState, ProcessMetrics, SERVICES_PATH, ServiceActionReport, ServiceOutcome,
+    ServiceStatusReport,
+};
 
 use serde::{Deserialize, Serialize};
 

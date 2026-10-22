@@ -81,6 +81,15 @@ export default {
             OVERLOADED: 'El agente está saturado. Inténtalo de nuevo en unos segundos.',
             UNAVAILABLE: 'El servicio no está disponible en este momento.',
             INTERNAL: 'El agente encontró un error interno.',
+            SERVICE_NOT_FOUND: 'El servicio no está registrado en el agente.',
+            UNIT_NOT_FOUND: 'El servicio está registrado, pero su unidad no existe en systemd.',
+            UNIT_MASKED: 'La unidad del servicio está enmascarada en systemd.',
+            UNIT_REFUSES_MANUAL_OPERATION: 'La unidad no permite arrancarla ni pararla manualmente.',
+            SERVICE_JOB_FAILED: 'systemd ejecutó la acción, pero el servicio falló. Revisa sus logs.',
+            SYSTEMD_PERMISSION_DENIED:
+                'El agente no tiene permiso para gestionar servicios. Revisa la regla de polkit del servidor.',
+            SYSTEMD_TIMEOUT: 'systemd no respondió a tiempo. La acción puede seguir en curso.',
+            SYSTEMD_FAILED: 'Falló la comunicación con systemd.',
             UNKNOWN: 'El agente devolvió un error desconocido.',
         },
         tunnel: {

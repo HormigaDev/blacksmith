@@ -187,6 +187,20 @@ impl Database {
         .await
     }
 
+    pub async fn service_by_slug(&self, slug: ServiceSlug) -> Result<Option<Service>, DbError> {
+        self.call(move |connection| {
+            connection
+                .query_row(
+                    "SELECT id, slug, name, created_at, updated_at FROM services WHERE slug = ?1",
+                    [slug.as_str()],
+                    service_row,
+                )
+                .optional()?
+                .transpose()
+        })
+        .await
+    }
+
     /// Devuelve si existía.
     pub async fn delete_service(&self, id: ServiceId) -> Result<bool, DbError> {
         self.call(move |connection| {
@@ -312,6 +326,11 @@ mod tests {
 
         assert_eq!(db.services().await.unwrap(), [api.clone(), web.clone()]);
         assert_eq!(db.service(api.id).await.unwrap(), Some(api.clone()));
+        assert_eq!(
+            db.service_by_slug(slug("api")).await.unwrap(),
+            Some(api.clone())
+        );
+        assert_eq!(db.service_by_slug(slug("otra")).await.unwrap(), None);
         assert!(db.delete_service(api.id).await.unwrap());
         assert!(!db.delete_service(api.id).await.unwrap());
         assert_eq!(db.service(api.id).await.unwrap(), None);
@@ -347,7 +366,16 @@ mod tests {
     async fn el_esquema_aplica_las_mismas_reglas() {
         let db = Database::open_in_memory().unwrap();
         db.call(|connection| {
-            for slug in ["", "API", "-a", "a-", "a_b", "a.b", &"a".repeat(49)] {
+            for slug in [
+                "",
+                "API",
+                "-a",
+                "a-",
+                "a_b",
+                "a.b",
+                "agent-permission-check",
+                &"a".repeat(49),
+            ] {
                 let result = connection.execute(
                     "INSERT INTO services (slug, name, created_at, updated_at) VALUES (?1, 'x', 0, 0)",
                     [slug],

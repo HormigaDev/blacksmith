@@ -17,13 +17,17 @@ use std::{
     time::{Duration, Instant},
 };
 
-use agent::systemd::{Action, Outcome, Scope, Systemctl, SystemctlError, UnitName};
+use agent::systemd::{Action, Operation, Outcome, Scope, Systemctl, SystemctlError, UnitName};
 
 /// El comportamiento depende del último argumento (la unidad).
 const FAKE: &str = r#"#!/bin/sh
 for unit; do :; done
 case "$unit" in
     ok.service) exit 0 ;;
+    pid.service) echo 4242; exit 0 ;;
+    detenido.service) echo 0; exit 0 ;;
+    basura.service) echo "MainPID=12"; exit 0 ;;
+    pid-lento.service) exec /bin/sleep 30 ;;
     lento.service) exec /bin/sleep 30 ;;
     ruidoso.service) /usr/bin/head -c 1000000 /dev/zero | /usr/bin/tr '\0' x >&2; exit 1 ;;
     eco.service) echo "ARGS: $* ENV: $(/usr/bin/env | /usr/bin/sort | /usr/bin/tr '\n' ' ')" >&2; exit 1 ;;
@@ -104,7 +108,7 @@ async fn el_tiempo_maximo_mata_el_proceso() {
         matches!(
             error,
             SystemctlError::Timeout {
-                action: Action::Start,
+                operation: Operation::Start,
                 ..
             }
         ),
@@ -134,6 +138,52 @@ async fn salida_de_error_enorme_acotada_sin_bloquear() {
         panic!("se esperaba Failed: {error:?}");
     };
     assert!(detail.len() <= 4 * 1024, "{}", detail.len());
+}
+
+#[tokio::test]
+async fn pid_principal() {
+    let systemctl = systemctl(Duration::from_secs(5));
+    let pid = systemctl.main_pid(&unit("pid")).await.unwrap().unwrap();
+    assert_eq!(pid.as_raw_nonzero().get(), 4242);
+    // Detenido (y también inexistente): systemd responde 0.
+    assert_eq!(systemctl.main_pid(&unit("detenido")).await.unwrap(), None);
+
+    let error = systemctl.main_pid(&unit("basura")).await.unwrap_err();
+    assert!(
+        matches!(
+            error,
+            SystemctlError::UnexpectedOutput { operation: Operation::ShowMainPid, ref output, .. }
+                if output == "MainPID=12\n"
+        ),
+        "{error:?}"
+    );
+    // El script falso falla con «not found» para lo que no conoce.
+    let error = systemctl.main_pid(&unit("otra")).await.unwrap_err();
+    assert!(
+        matches!(error, SystemctlError::UnitNotFound { .. }),
+        "{error:?}"
+    );
+}
+
+#[tokio::test]
+async fn la_consulta_tiene_su_propio_tiempo_maximo() {
+    // Aunque las acciones admitan 120 s, una consulta colgada no bloquea las métricas.
+    let start = Instant::now();
+    let error = systemctl(Duration::from_millis(300))
+        .main_pid(&unit("pid-lento"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            SystemctlError::Timeout {
+                operation: Operation::ShowMainPid,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+    assert!(start.elapsed() < Duration::from_secs(5));
 }
 
 #[tokio::test]
@@ -236,14 +286,32 @@ async fn ciclo_de_vida_real_de_usuario() {
     let systemctl = Systemctl::new("/usr/bin/systemctl", Scope::User, Duration::from_secs(30));
     let ok = unit("blacksmith-prueba-ok");
 
+    assert_eq!(systemctl.main_pid(&ok).await.unwrap(), None);
     assert_eq!(systemctl.start(&ok).await.unwrap(), Outcome::Started);
     assert!(is_active(ok.as_str()));
+    // El PID es el del `sleep 300` de la unidad.
+    let pid = systemctl
+        .main_pid(&ok)
+        .await
+        .unwrap()
+        .expect("PID principal");
+    let cmdline = fs::read(format!("/proc/{}/cmdline", pid.as_raw_nonzero())).unwrap();
+    assert_eq!(cmdline, b"/bin/sleep\x00300\x00");
     assert_eq!(systemctl.restart(&ok).await.unwrap(), Outcome::Restarted);
     assert!(is_active(ok.as_str()));
     assert_eq!(systemctl.stop(&ok).await.unwrap(), Outcome::Stopped);
     assert!(!is_active(ok.as_str()));
+    assert_eq!(systemctl.main_pid(&ok).await.unwrap(), None);
     // Parar lo ya parado no es un error.
     assert_eq!(systemctl.stop(&ok).await.unwrap(), Outcome::Stopped);
+    // Inexistente: systemd también responde 0.
+    assert_eq!(
+        systemctl
+            .main_pid(&unit("blacksmith-prueba-inexistente"))
+            .await
+            .unwrap(),
+        None
+    );
 
     let error = systemctl
         .start(&unit("blacksmith-prueba-falla"))

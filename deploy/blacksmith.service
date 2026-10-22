@@ -85,9 +85,11 @@ ProtectKernelLogs=yes
 ProtectControlGroups=yes
 ProtectClock=yes
 ProtectHostname=yes
-# Oculta los /proc/<pid> de otros usuarios. /proc/stat y /proc/meminfo siguen disponibles; las
-# métricas por servicio se leen de la contabilidad de cgroups de systemd, no de /proc.
-ProtectProc=invisible
+# `default` y no `invisible`: las métricas de los servicios (RSS y CPU) se leen de
+# /proc/<pid>/stat y statm de su proceso principal, que corre con otro usuario. Lo que sigue
+# protegido lo protege el kernel por permisos: /proc/<pid>/environ, mem, fd… son solo del dueño,
+# y el agente no tiene capacidades (CapabilityBoundingSet= vacío) para saltárselo.
+ProtectProc=default
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
