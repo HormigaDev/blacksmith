@@ -1,0 +1,37 @@
+// BBEL Blacksmith: lo único que el usuario del agente puede pedir a polkit.
+//
+// Instalación (como root; polkitd recarga solo al cambiar el archivo):
+//   install -o root -g root -m 0644 deploy/polkit/10-blacksmith.rules /etc/polkit-1/rules.d/
+//
+// - Solo afecta al usuario `blacksmith`; para el resto devuelve NOT_HANDLED.
+// - Le permite start, stop y restart de unidades `bbel-<slug>.service`, el prefijo reservado a
+//   los servicios del agente. Nada más: otras unidades (ssh, nginx, dbus, el propio agente…),
+//   otros verbos (enable, mask, kill, set-property…) y cualquier otra acción de polkit
+//   (daemon-reload, reiniciar el equipo…) se le deniegan explícitamente, sin pasar a las reglas
+//   siguientes. Es una lista de permitidos: no hace falta mantener una lista de unidades críticas.
+// - El prefijo `20-`/`49-`/`50-` de las reglas de la distribución es posterior: polkit evalúa
+//   por orden de nombre y gana la primera regla que decide.
+// - El patrón debe coincidir con MANAGED_UNIT_PATTERN (agent/src/services/mod.rs): lo comprueba
+//   un test del agente.
+//
+// Sintaxis ES5 a propósito: es la que admiten todos los motores de polkit (duktape y mozjs).
+
+polkit.addRule(function (action, subject) {
+    if (subject.user !== "blacksmith") {
+        return polkit.Result.NOT_HANDLED;
+    }
+
+    if (action.id === "org.freedesktop.systemd1.manage-units") {
+        var unit = action.lookup("unit");
+        var verb = action.lookup("verb");
+        if (
+            typeof unit === "string" &&
+            /^bbel-[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?\.service$/.test(unit) &&
+            (verb === "start" || verb === "stop" || verb === "restart")
+        ) {
+            return polkit.Result.YES;
+        }
+    }
+
+    return polkit.Result.NO;
+});

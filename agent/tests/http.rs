@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use agent::{config::Config, http, state::AppState};
+use agent::{config::Config, db::Database, http, state::AppState};
 use axum::{
     Router,
     body::Body,
@@ -15,7 +15,10 @@ use tower::ServiceExt;
 
 fn app() -> Router {
     let config = Config::from_vars([("BLACKSMITH_ENV", "production")]).unwrap();
-    http::router(AppState::new(Arc::new(config)))
+    http::router(AppState::new(
+        Arc::new(config),
+        Database::open_in_memory().unwrap(),
+    ))
 }
 
 fn request(method: Method, uri: &str, headers: &[(&str, &str)]) -> Request<Body> {

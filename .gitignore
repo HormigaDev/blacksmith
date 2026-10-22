@@ -7,6 +7,8 @@ CLAUDE.md
 .env
 # Secretos locales de desarrollo
 .secrets/
+# Base de datos local del agente en desarrollo (BLACKSMITH_DATABASE_PATH)
+.data/
 
 Plans.md
 

@@ -7,7 +7,7 @@ use tokio::{
     sync::watch,
 };
 
-use crate::{config::Config, http, state::AppState};
+use crate::{config::Config, db::Database, http, state::AppState};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServerError {
@@ -25,7 +25,7 @@ pub enum ServerError {
 
 /// Sirve hasta recibir SIGTERM/SIGINT. Después drena las conexiones abiertas durante, como
 /// mucho, `shutdown_timeout`; las que sigan vivas se cortan.
-pub async fn run(config: Arc<Config>) -> Result<(), ServerError> {
+pub async fn run(config: Arc<Config>, db: Database) -> Result<(), ServerError> {
     // Los manejadores se instalan antes de aceptar tráfico para que un fallo aborte el arranque.
     let mut sigterm = signal(SignalKind::terminate()).map_err(ServerError::Signals)?;
     let mut sigint = signal(SignalKind::interrupt()).map_err(ServerError::Signals)?;
@@ -36,7 +36,7 @@ pub async fn run(config: Arc<Config>) -> Result<(), ServerError> {
         .map_err(|source| ServerError::Bind { addr, source })?;
 
     let (draining, drain_signal) = watch::channel(false);
-    let app = http::router(AppState::new(Arc::clone(&config)));
+    let app = http::router(AppState::new(Arc::clone(&config), db));
     let server = axum::serve(listener, app)
         .with_graceful_shutdown(wait_for_drain(drain_signal))
         .into_future();

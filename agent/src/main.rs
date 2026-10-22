@@ -3,9 +3,10 @@
 
 use std::{process::ExitCode, sync::Arc};
 
-use agent::{config::Config, error::DisplayChain, server, telemetry};
+use agent::{config::Config, db::Database, error::DisplayChain, server, telemetry};
 
 const EX_SOFTWARE: u8 = 70;
+const EX_CANTCREAT: u8 = 73;
 const EX_NOPERM: u8 = 77;
 const EX_CONFIG: u8 = 78;
 
@@ -38,6 +39,23 @@ fn main() -> ExitCode {
         return ExitCode::from(EX_CONFIG);
     }
 
+    // Antes del runtime: abrir es síncrono y, si falla, no hay nada que servir.
+    let db = match Database::open(&config.database_path) {
+        Ok(db) => db,
+        Err(error) => {
+            tracing::error!(
+                path = %config.database_path.display(),
+                error = %DisplayChain(&error),
+                "no se pudo abrir la base de datos"
+            );
+            return ExitCode::from(if error.is_configuration() {
+                EX_CONFIG
+            } else {
+                EX_CANTCREAT
+            });
+        }
+    };
+
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(config.worker_threads)
         .max_blocking_threads(config.max_blocking_threads)
@@ -52,7 +70,7 @@ fn main() -> ExitCode {
         }
     };
 
-    match runtime.block_on(server::run(config)) {
+    match runtime.block_on(server::run(config, db)) {
         Ok(()) => {
             tracing::info!("agente detenido");
             ExitCode::SUCCESS

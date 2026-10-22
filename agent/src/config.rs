@@ -18,6 +18,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     ops::RangeInclusive,
     os::unix::fs::PermissionsExt,
+    path::PathBuf,
     str::FromStr,
     time::Duration,
 };
@@ -40,6 +41,7 @@ pub mod vars {
     pub const BODY_LIMIT_BYTES: &str = "BLACKSMITH_BODY_LIMIT_BYTES";
     pub const MAX_CONCURRENCY: &str = "BLACKSMITH_MAX_CONCURRENCY";
     pub const GITHUB_WEBHOOK_SECRET_FILE: &str = "BLACKSMITH_GITHUB_WEBHOOK_SECRET_FILE";
+    pub const DATABASE_PATH: &str = "BLACKSMITH_DATABASE_PATH";
 
     pub(super) const ALL: &[&str] = &[
         ENV,
@@ -53,6 +55,7 @@ pub mod vars {
         BODY_LIMIT_BYTES,
         MAX_CONCURRENCY,
         GITHUB_WEBHOOK_SECRET_FILE,
+        DATABASE_PATH,
     ];
 }
 
@@ -85,6 +88,14 @@ impl Environment {
             Self::Development => "info,agent=debug,tower_http=debug",
             Self::Production => "info",
         }
+    }
+
+    /// Producción: el `StateDirectory=` de la unidad. Desarrollo: relativa al directorio actual.
+    fn default_database_path(self) -> PathBuf {
+        PathBuf::from(match self {
+            Self::Development => ".data/agent.db",
+            Self::Production => "/var/lib/blacksmith/agent.db",
+        })
     }
 
     fn default_log_format(self) -> LogFormat {
@@ -131,6 +142,8 @@ pub struct Config {
     pub max_concurrency: usize,
     /// Si es `None`, los webhooks de GitHub quedan deshabilitados.
     pub github_webhook_secret: Option<SecretString>,
+    /// Archivo SQLite del agente (ver `db`).
+    pub database_path: PathBuf,
 }
 
 impl Config {
@@ -188,6 +201,11 @@ impl Config {
                 vars::GITHUB_WEBHOOK_SECRET_FILE,
                 None,
                 |path| read_secret_file(path).map(Some),
+            ),
+            database_path: reader.optional(
+                vars::DATABASE_PATH,
+                environment.default_database_path(),
+                |raw| parse_database_path(raw, environment),
             ),
         };
 
@@ -365,6 +383,19 @@ fn parse_bind_addr(raw: &str) -> Result<SocketAddr, String> {
     Ok(addr)
 }
 
+fn parse_database_path(raw: &str, environment: Environment) -> Result<PathBuf, String> {
+    let path = PathBuf::from(raw);
+    if raw.ends_with('/') || path.file_name().is_none() {
+        return Err(format!("«{raw}» no es una ruta de archivo"));
+    }
+    if environment == Environment::Production && !path.is_absolute() {
+        return Err(format!(
+            "«{raw}» debe ser absoluta en producción (p. ej. /var/lib/blacksmith/agent.db)"
+        ));
+    }
+    Ok(path)
+}
+
 fn parse_log_filter(raw: &str) -> Result<String, String> {
     EnvFilter::try_new(raw)
         .map(|_| raw.to_owned())
@@ -489,6 +520,40 @@ mod tests {
             name: "BLACKSMITH_BIND_ADRR".to_owned()
         }));
         assert!(found.contains(&ConfigIssue::Missing { name: vars::ENV }));
+    }
+
+    #[test]
+    fn ruta_de_la_base_de_datos() {
+        let config = load(&[(vars::ENV, "production")]).unwrap();
+        assert_eq!(
+            config.database_path,
+            PathBuf::from("/var/lib/blacksmith/agent.db")
+        );
+        for raw in ["agent.db", "/var/lib/blacksmith/", ".."] {
+            assert!(
+                matches!(
+                    issues(&[(vars::ENV, "production"), (vars::DATABASE_PATH, raw)]).as_slice(),
+                    [ConfigIssue::Invalid {
+                        name: vars::DATABASE_PATH,
+                        ..
+                    }]
+                ),
+                "{raw} debería rechazarse"
+            );
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn ruta_relativa_solo_en_desarrollo() {
+        let config = load(&[(vars::ENV, "development")]).unwrap();
+        assert_eq!(config.database_path, PathBuf::from(".data/agent.db"));
+        let config = load(&[
+            (vars::ENV, "development"),
+            (vars::DATABASE_PATH, "tmp/x.db"),
+        ])
+        .unwrap();
+        assert_eq!(config.database_path, PathBuf::from("tmp/x.db"));
     }
 
     #[test]

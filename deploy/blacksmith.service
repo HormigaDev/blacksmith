@@ -5,16 +5,16 @@
 #   install -D -o root -g root -m 0755 target/release/blacksmith-agent /opt/blacksmith/bin/blacksmith-agent
 #   install -d -o root -g blacksmith -m 0750 /etc/blacksmith
 #   install -o root -g blacksmith -m 0640 agent.env /etc/blacksmith/agent.env   # ver .env.template
+#   install -o root -g root -m 0644 deploy/polkit/10-blacksmith.rules /etc/polkit-1/rules.d/
 #   install -m 0644 deploy/blacksmith.service /etc/systemd/system/blacksmith.service
 #   systemctl daemon-reload && systemctl enable --now blacksmith
 #
 # El binario y su directorio pertenecen a root: el usuario del servicio nunca debe poder
 # reemplazar su propio ejecutable.
 #
-# Gestión de units: el agente no escala privilegios (NoNewPrivileges= lo impide). Para que pueda
-# arrancar o parar servicios, añada una regla de polkit que autorice
-# `org.freedesktop.systemd1.manage-units` al usuario `blacksmith`, limitada a la lista
-# explícita de units gestionadas, nunca a todas.
+# Gestión de units: el agente no escala privilegios (NoNewPrivileges= lo impide). Puede arrancar,
+# parar y reiniciar únicamente las units `bbel-*.service` porque así lo autoriza la regla de
+# polkit deploy/polkit/10-blacksmith.rules; cualquier otra petición suya a polkit se deniega.
 
 [Unit]
 Description=BBEL Blacksmith Agent
@@ -34,6 +34,11 @@ User=blacksmith
 Group=blacksmith
 # Lectura del journal de las units gestionadas (journalctl -u …).
 SupplementaryGroups=systemd-journal
+
+# Base de datos (BLACKSMITH_DATABASE_PATH, por defecto /var/lib/blacksmith/agent.db). systemd crea
+# el directorio, propiedad de blacksmith, y es lo único escribible con ProtectSystem=strict.
+StateDirectory=blacksmith
+StateDirectoryMode=0700
 
 # Configuración no secreta (BLACKSMITH_*). root:blacksmith 0640.
 Environment=BLACKSMITH_ENV=production
