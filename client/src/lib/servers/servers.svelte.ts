@@ -13,9 +13,11 @@ import {
     forgetHostKey,
     type HostKeyDetails,
     listServers,
+    localAgentStatus,
     onTunnelClosed,
     openTunnel,
     removeServer,
+    reorderServers,
     type ServerProfile,
     targetOf,
     toTunnelError,
@@ -24,6 +26,18 @@ import {
     type TunnelInfo,
 } from '$lib/ssh';
 import { toast } from '$lib/toast';
+
+export type ServerView = 'list' | 'grid';
+
+const VIEW_STORAGE_KEY = 'blacksmith:servers-view';
+
+function readView(): ServerView {
+    try {
+        return localStorage.getItem(VIEW_STORAGE_KEY) === 'grid' ? 'grid' : 'list';
+    } catch {
+        return 'list';
+    }
+}
 
 export type ServerStatus = 'disconnected' | 'connecting' | 'connected' | 'agentMissing' | 'error';
 
@@ -39,6 +53,7 @@ export interface ServerEntry {
 
 class ServersState {
     #entries = $state<ServerEntry[]>([]);
+    #view = $state<ServerView>(readView());
     #loaded = $state(false);
     /** Servidor nuevo: el usuario debe confirmar su huella antes de conectar. */
     pendingTrust = $state<{ id: string; hostKey: HostKeyDetails } | null>(null);
@@ -51,6 +66,39 @@ class ServersState {
 
     get loaded(): boolean {
         return this.#loaded;
+    }
+
+    /** Lista o cuadrícula; se recuerda en este equipo. */
+    get view(): ServerView {
+        return this.#view;
+    }
+
+    set view(view: ServerView) {
+        this.#view = view;
+        try {
+            localStorage.setItem(VIEW_STORAGE_KEY, view);
+        } catch {
+            // Sin almacenamiento la vista funciona igual; solo no se recuerda.
+        }
+    }
+
+    /** Mueve un servidor en la lista local (respuesta inmediata al arrastrar). `saveOrder` lo persiste. */
+    move(from: number, to: number): void {
+        const entries = [...this.#entries];
+        const [moved] = entries.splice(from, 1);
+        if (!moved || to < 0 || to > entries.length) return;
+        entries.splice(to, 0, moved);
+        this.#entries = entries;
+    }
+
+    /** Persiste el orden actual. Si Rust lo rechaza, se vuelve al orden guardado. */
+    async saveOrder(): Promise<void> {
+        try {
+            await reorderServers(this.#entries.map((entry) => entry.profile.id));
+        } catch (error) {
+            toast.error(describeError(error));
+            await this.load();
+        }
     }
 
     find(id: string): ServerEntry | undefined {
@@ -74,10 +122,16 @@ class ServersState {
         if (!entry || entry.status === 'connecting') return;
         this.#update(id, { status: 'connecting', error: undefined, errorCode: undefined });
         try {
-            const tunnel = await openTunnel(targetOf(entry.profile), options);
+            const tunnel =
+                entry.profile.kind === 'local'
+                    ? await connectLocal(entry.profile)
+                    : await openTunnel(targetOf(entry.profile), options);
             this.#update(id, { status: 'connected', tunnel });
             toast.success(t('servers.connect.connected', { host: entry.profile.host }), {
-                description: t('servers.connect.connectedDetail', { port: tunnel.localPort }),
+                description:
+                    entry.profile.kind === 'local'
+                        ? t('servers.card.connectedLocal', { port: tunnel.localPort })
+                        : t('servers.connect.connectedDetail', { port: tunnel.localPort }),
             });
         } catch (error) {
             this.#failed(id, error);
@@ -103,7 +157,8 @@ class ServersState {
         const entry = this.find(id);
         if (!entry) return;
         try {
-            await closeTunnel(targetOf(entry.profile));
+            // Un servidor local no tiene túnel: no hay nada que cerrar en Rust.
+            if (entry.profile.kind === 'ssh') await closeTunnel(targetOf(entry.profile));
             this.#update(id, { status: 'disconnected', tunnel: undefined });
         } catch (error) {
             toast.error(describeError(error));
@@ -130,7 +185,7 @@ class ServersState {
         const entry = this.find(id);
         if (!entry) return;
         try {
-            await removeServer(targetOf(entry.profile));
+            await removeServer(id);
             this.#entries = this.#entries.filter((candidate) => candidate.profile.id !== id);
         } catch (error) {
             toast.error(describeError(error));
@@ -171,7 +226,7 @@ class ServersState {
                 this.pendingPassphrase = { id, invalid: failure.code === 'PASSPHRASE_INVALID' };
                 break;
             case 'AGENT_UNREACHABLE':
-                // SSH funciona pero el agente no responde: aún no está instalado o configurado.
+                // El agente no responde (SSH funciona, o es el equipo local): aún no está en marcha.
                 this.#update(id, { status: 'agentMissing' });
                 break;
             default:
@@ -182,6 +237,12 @@ class ServersState {
     #update(id: string, changes: Partial<ServerEntry>): void {
         this.#entries = this.#entries.map((entry) => (entry.profile.id === id ? { ...entry, ...changes } : entry));
     }
+}
+
+/** Un servidor local se "conecta" comprobando el agente: no hay túnel, el puerto es el suyo. */
+async function connectLocal(profile: ServerProfile): Promise<TunnelInfo> {
+    const agent = await localAgentStatus(profile.port);
+    return { targetId: profile.id, localPort: profile.port, remotePort: profile.port, agent };
 }
 
 export const servers = new ServersState();

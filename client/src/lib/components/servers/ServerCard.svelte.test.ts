@@ -1,3 +1,4 @@
+import { createRawSnippet } from 'svelte';
 import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
@@ -6,7 +7,15 @@ import type { ServerEntry } from '$lib/servers/servers.svelte';
 
 import ServerCard from './ServerCard.svelte';
 
-const PROFILE = { id: 'deploy@vps.example.com:22', host: 'vps.example.com', port: 22, username: 'deploy' };
+const PROFILE = {
+    id: 'deploy@vps.example.com:22',
+    kind: 'ssh' as const,
+    host: 'vps.example.com',
+    port: 22,
+    username: 'deploy',
+};
+const LOCAL = { id: 'local:4040', kind: 'local' as const, host: 'localhost', port: 4040, username: '' };
+const AGENT = { name: 'blacksmith-agent', version: '1.2.3', status: 'ready' as const };
 
 function setup(entry: Partial<ServerEntry> = {}) {
     const handlers = {
@@ -41,10 +50,11 @@ describe('ServerCard', () => {
     test('conectado: muestra el puerto local y desconecta', async () => {
         const card = setup({
             status: 'connected',
-            tunnel: { targetId: PROFILE.id, localPort: 51234, remotePort: 4040 },
+            tunnel: { targetId: PROFILE.id, localPort: 51234, remotePort: 4040, agent: AGENT },
         });
         await card.render();
         await expect.element(page.getByText('Túnel activo en 127.0.0.1:51.234')).toBeVisible();
+        await expect.element(page.getByText('Agente 1.2.3')).toBeVisible();
         await page.getByRole('button', { name: 'Desconectar' }).click();
         expect(card.onDisconnect).toHaveBeenCalledOnce();
     });
@@ -66,5 +76,39 @@ describe('ServerCard', () => {
         expect(card.onForgetHostKey).not.toHaveBeenCalled();
         await page.getByRole('button', { name: 'Olvidar llave' }).click();
         await expect.poll(() => card.onForgetHostKey.mock.calls.length).toBe(1);
+    });
+
+    test('local: dirección, insignia y ayuda propias, sin túnel', async () => {
+        const card = setup({ profile: LOCAL, status: 'agentMissing' });
+        await card.render();
+        await expect.element(page.getByRole('heading', { name: 'localhost:4040' })).toBeVisible();
+        await expect.element(page.getByText('Este equipo')).toBeVisible();
+        await expect.element(page.getByText(/No hay ningún agente escuchando en 127\.0\.0\.1:4040/)).toBeVisible();
+    });
+
+    test('local conectado: conexión directa', async () => {
+        const card = setup({
+            profile: LOCAL,
+            status: 'connected',
+            tunnel: { targetId: LOCAL.id, localPort: 4040, remotePort: 4040, agent: AGENT },
+        });
+        await card.render();
+        await expect.element(page.getByText('Conexión directa a 127.0.0.1:4040, sin túnel')).toBeVisible();
+    });
+
+    test('tarjeta de cuadrícula con asa: muestra el asa y las mismas acciones', async () => {
+        const card = setup();
+        await render(ServerCard, {
+            entry: { profile: PROFILE, status: 'disconnected' },
+            onConnect: card.onConnect,
+            onDisconnect: card.onDisconnect,
+            onRemove: card.onRemove,
+            onForgetHostKey: card.onForgetHostKey,
+            layout: 'tile',
+            handle: createRawSnippet(() => ({ render: () => '<button type="button">Asa</button>' })),
+        });
+        await expect.element(page.getByRole('button', { name: 'Asa' })).toBeVisible();
+        await page.getByRole('button', { name: 'Conectar' }).click();
+        expect(card.onConnect).toHaveBeenCalledOnce();
     });
 });

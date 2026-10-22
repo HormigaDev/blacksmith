@@ -1,3 +1,4 @@
+mod agent_probe;
 mod commands;
 mod error;
 mod secrets;
@@ -63,7 +64,10 @@ pub fn run() {
             commands::tunnel_close,
             commands::tunnel_status,
             commands::servers_list,
+            commands::servers_reorder,
             commands::server_remove,
+            commands::server_add_local,
+            commands::local_agent_status,
         ])
         .run(tauri::generate_context!());
     if let Err(error) = result {

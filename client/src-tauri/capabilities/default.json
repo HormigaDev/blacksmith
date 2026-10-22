@@ -23,6 +23,15 @@
     "allow-tunnel-close",
     "allow-tunnel-status",
     "allow-servers-list",
-    "allow-server-remove"
+    "allow-server-remove",
+    "allow-server-add-local",
+    "allow-local-agent-status",
+    "allow-servers-reorder",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-is-maximized"
   ]
 }

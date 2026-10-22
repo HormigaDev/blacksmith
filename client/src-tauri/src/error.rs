@@ -55,8 +55,10 @@ pub enum CommandError {
     HostKeyNotPending,
     #[error("el servidor rechazó la llave")]
     AuthRejected,
-    #[error("el túnel está abierto pero el agente no responde")]
+    #[error("el agente no responde")]
     AgentUnreachable,
+    #[error("en el puerto del agente responde otro servicio")]
+    AgentInvalid,
     #[error("el puerto local {port} está en uso")]
     PortInUse { port: u16 },
 
@@ -100,6 +102,7 @@ impl CommandError {
             Self::HostKeyNotPending => "HOST_KEY_NOT_PENDING",
             Self::AuthRejected => "AUTH_REJECTED",
             Self::AgentUnreachable => "AGENT_UNREACHABLE",
+            Self::AgentInvalid => "AGENT_INVALID",
             Self::PortInUse { .. } => "PORT_IN_USE",
             Self::Internal { .. } => "INTERNAL",
         }

@@ -25,6 +25,12 @@
     </div>
 </Story>
 
+<Story name="Este equipo" layout="stack" description="Con localhost no hay túnel ni llave: solo el puerto del agente.">
+    <div class="frame">
+        <AddServerForm initial={{ host: 'localhost' }} />
+    </div>
+</Story>
+
 <style>
     .frame {
         width: min(100%, var(--dialog-width-lg));

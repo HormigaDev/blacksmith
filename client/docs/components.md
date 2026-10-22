@@ -75,6 +75,28 @@ Convenciones comunes de los controles de formulario:
       un tamaño en píxeles ni un color.
 - Todo texto visible sale de `t()`, también los `aria-label` internos.
 
+### Ventana sin marco
+
+La ventana principal no tiene marco nativo (`decorations: false` en `tauri.conf.json`; el
+Workbench sí lo conserva). La cabecera de `AppShell` hace de barra de título:
+
+- `data-tauri-drag-region="deep"`: se arrastra la ventana desde cualquier punto de la cabecera que
+  no sea un control interactivo (botones, enlaces, campos, elementos con `tabindex` o rol
+  interactivo); doble clic maximiza/restaura. Un control nuevo en la cabecera no necesita nada más.
+- `WindowControls` (minimizar, maximizar/restaurar, cerrar) llama a la API de ventana de Tauri. Los
+  permisos `core:window:allow-*` necesarios están en `capabilities/default.json`; fuera de Tauri no
+  se muestra.
+- Pendiente de verificar a mano el redimensionado por los bordes en Windows y Linux (Tauri lo
+  gestiona en ventanas sin marco, pero no está cubierto por tests).
+
+### Reordenar listas
+
+`ServerList` es la referencia para listas reordenables: asa con eventos de **puntero** (no el
+drag & drop de HTML5, que Tauri desactiva en Windows mientras el soltar archivos nativo está
+activo), escuchados en `window` porque al mover el elemento en el DOM se pierde la captura del
+puntero; teclado con flechas, Inicio y Fin desde el asa, con anuncio `aria-live` y el foco
+devuelto al asa; el orden se aplica al momento (`onMove`) y se persiste al terminar (`onCommit`).
+
 ## 4. Cliente HTTP (`$lib/http`)
 
 Vanilla sobre la API de Fetch: **no se usa Axios** ni ninguna librería HTTP.

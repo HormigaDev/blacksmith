@@ -9,6 +9,13 @@ pub use error::{ApiErrorBody, ErrorCode};
 
 use serde::{Deserialize, Serialize};
 
+/// Nombre con el que se identifica el agente en `GET /api/v1/health`. El cliente lo comprueba para
+/// distinguir el agente de cualquier otro servicio que escuche en el mismo puerto.
+pub const AGENT_NAME: &str = "blacksmith-agent";
+
+/// Ruta del estado del agente.
+pub const HEALTH_PATH: &str = "/api/v1/health";
+
 /// Estado básico reportado por el agente.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentStatus {

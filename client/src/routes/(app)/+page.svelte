@@ -1,14 +1,21 @@
 <script lang="ts">
+    import LayoutGridIcon from '@lucide/svelte/icons/layout-grid';
+    import ListIcon from '@lucide/svelte/icons/list';
     import PlusIcon from '@lucide/svelte/icons/plus';
 
     import { APP_NAME } from '$lib/app';
     import AddServerForm from '$lib/components/servers/AddServerForm.svelte';
-    import ServerCard from '$lib/components/servers/ServerCard.svelte';
-    import { Button, ConfirmDialog, Dialog, Input } from '$lib/components/ui';
+    import ServerList from '$lib/components/servers/ServerList.svelte';
+    import { Button, ConfirmDialog, Dialog, Input, ToggleGroup } from '$lib/components/ui';
     import { t } from '$lib/i18n';
     import { servers } from '$lib/servers/servers.svelte';
 
     let addOpen = $state(false);
+
+    const views = $derived([
+        { value: 'list' as const, label: t('servers.view.list'), icon: ListIcon },
+        { value: 'grid' as const, label: t('servers.view.grid'), icon: LayoutGridIcon },
+    ]);
     let passphrase = $state('');
 
     const trusting = $derived(servers.pendingTrust && servers.find(servers.pendingTrust.id));
@@ -54,20 +61,30 @@
     <section class="list">
         <header class="list-header">
             <h1 class="list-title">{t('servers.title')}</h1>
-            <Button variant="primary" onclick={() => (addOpen = true)}>
-                <PlusIcon />
-                {t('servers.add.open')}
-            </Button>
+            <div class="list-tools">
+                <ToggleGroup
+                    label={t('servers.view.label')}
+                    options={views}
+                    iconOnly
+                    size="sm"
+                    bind:value={() => servers.view, (view) => (servers.view = view)}
+                />
+                <Button variant="primary" onclick={() => (addOpen = true)}>
+                    <PlusIcon />
+                    {t('servers.add.open')}
+                </Button>
+            </div>
         </header>
-        {#each servers.entries as entry (entry.profile.id)}
-            <ServerCard
-                {entry}
-                onConnect={() => servers.connect(entry.profile.id)}
-                onDisconnect={() => servers.disconnect(entry.profile.id)}
-                onRemove={() => servers.remove(entry.profile.id)}
-                onForgetHostKey={() => servers.forgetHostKey(entry.profile.id)}
-            />
-        {/each}
+        <ServerList
+            entries={servers.entries}
+            view={servers.view}
+            onMove={(from, to) => servers.move(from, to)}
+            onCommit={() => servers.saveOrder()}
+            onConnect={(id) => servers.connect(id)}
+            onDisconnect={(id) => servers.disconnect(id)}
+            onRemove={(id) => servers.remove(id)}
+            onForgetHostKey={(id) => servers.forgetHostKey(id)}
+        />
     </section>
 {:else if servers.loaded}
     <section class="empty">
@@ -135,7 +152,6 @@
         display: flex;
         flex-direction: column;
         gap: var(--space-3);
-        max-width: var(--layout-content-max-width);
     }
 
     .list-header {
@@ -144,6 +160,12 @@
         justify-content: space-between;
         gap: var(--space-4);
         margin-bottom: var(--space-2);
+    }
+
+    .list-tools {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
     }
 
     .list-title {

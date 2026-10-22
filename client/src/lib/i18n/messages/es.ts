@@ -105,13 +105,32 @@ export default {
                 'La llave del servidor cambió desde la última conexión. Podría tratarse de un ataque: no se ha conectado.',
             HOST_KEY_NOT_PENDING: 'La huella ya no coincide con la presentada. Vuelve a conectar.',
             AUTH_REJECTED: 'El servidor rechazó la llave. Comprueba el usuario y que la llave esté autorizada.',
-            AGENT_UNREACHABLE: 'La conexión SSH funciona, pero el agente de Blacksmith no responde en el servidor.',
+            AGENT_UNREACHABLE: 'El agente de Blacksmith no responde.',
+            AGENT_INVALID: 'En el puerto del agente responde otro servicio, no el agente de Blacksmith.',
             PORT_IN_USE: 'El puerto local {port} está en uso.',
             INTERNAL: 'Ocurrió un error inesperado al conectar.',
         },
     },
+    window: {
+        controls: 'Controles de la ventana',
+        minimize: 'Minimizar',
+        maximize: 'Maximizar',
+        restore: 'Restaurar',
+        close: 'Cerrar',
+    },
     servers: {
         title: 'Servidores',
+        view: {
+            label: 'Vista',
+            list: 'Lista',
+            grid: 'Cuadrícula',
+        },
+        reorder: {
+            handle: 'Mover {address}',
+            instructions:
+                'Arrastra para reordenar, o usa las flechas del teclado. Inicio y Fin llevan al principio o al final.',
+            moved: '{address}: posición {position} de {total}',
+        },
         empty: {
             title: 'Sin servidores todavía',
             description: 'Añade un VPS con su llave SSH. Se conectará por un túnel, sin exponer puertos.',
@@ -133,8 +152,13 @@ export default {
         card: {
             connect: 'Conectar',
             retry: 'Reintentar',
+            local: 'Este equipo',
             agentMissingHint:
                 'SSH funciona, pero el agente de Blacksmith no responde en el servidor. Instálalo o arráncalo y vuelve a intentarlo.',
+            agentMissingLocalHint:
+                'No hay ningún agente escuchando en 127.0.0.1:{port}. Arráncalo en este equipo y vuelve a intentarlo.',
+            connectedLocal: 'Conexión directa a 127.0.0.1:{port}, sin túnel',
+            agentVersion: 'Agente {version}',
         },
         remove: {
             action: 'Quitar servidor',
@@ -155,7 +179,10 @@ export default {
                 'La conexión va por un túnel SSH con tu llave; ningún puerto de administración queda expuesto.',
             open: 'Conectar servidor',
             host: 'Host',
-            hostHint: 'Dominio o IP del VPS',
+            hostHint: 'Dominio o IP del VPS. Con localhost se usa el agente de este equipo, sin túnel.',
+            localNote:
+                'Este equipo: no hace falta túnel SSH ni llave. Se conectará directamente al agente en 127.0.0.1.',
+            agentPort: 'Puerto del agente',
             hostPlaceholder: 'vps.ejemplo.com',
             usernamePlaceholder: 'deploy',
             keyContentPlaceholder: '-----BEGIN OPENSSH PRIVATE KEY-----',

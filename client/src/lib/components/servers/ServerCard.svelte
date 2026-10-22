@@ -2,6 +2,7 @@
 <script lang="ts">
     import ServerIcon from '@lucide/svelte/icons/server';
     import Trash2Icon from '@lucide/svelte/icons/trash-2';
+    import type { Snippet } from 'svelte';
 
     import { t } from '$lib/i18n';
     import type { ServerEntry } from '$lib/servers/servers.svelte';
@@ -17,15 +18,24 @@
         onDisconnect: () => void | Promise<void>;
         onRemove: () => void | Promise<void>;
         onForgetHostKey: () => void | Promise<void>;
+        /** `row` en la vista de lista; `tile` en la cuadrícula. */
+        layout?: 'row' | 'tile';
+        /** Asa para reordenar (la pone `ServerList`). */
+        handle?: Snippet;
     }
 
-    let { entry, onConnect, onDisconnect, onRemove, onForgetHostKey }: Props = $props();
+    let { entry, onConnect, onDisconnect, onRemove, onForgetHostKey, layout = 'row', handle }: Props = $props();
 
     let removeOpen = $state(false);
     let forgetOpen = $state(false);
 
     const profile = $derived(entry.profile);
-    const address = $derived(`${profile.username}@${profile.host}${profile.port === 22 ? '' : `:${profile.port}`}`);
+    const isLocal = $derived(profile.kind === 'local');
+    const address = $derived(
+        isLocal
+            ? `localhost:${profile.port}`
+            : `${profile.username}@${profile.host}${profile.port === 22 ? '' : `:${profile.port}`}`,
+    );
     const busy = $derived(entry.status === 'connecting');
     const retry = $derived(entry.status === 'agentMissing' || entry.status === 'error');
 
@@ -40,21 +50,33 @@
 
     const detail = $derived.by(() => {
         if (entry.status === 'connected' && entry.tunnel) {
-            return t('servers.connect.connectedDetail', { port: entry.tunnel.localPort });
+            const port = entry.tunnel.localPort;
+            return isLocal
+                ? t('servers.card.connectedLocal', { port })
+                : t('servers.connect.connectedDetail', { port });
         }
-        if (entry.status === 'agentMissing') return t('servers.card.agentMissingHint');
+        if (entry.status === 'agentMissing') {
+            return isLocal
+                ? t('servers.card.agentMissingLocalHint', { port: profile.port })
+                : t('servers.card.agentMissingHint');
+        }
         if (entry.status === 'error') return entry.error;
         return undefined;
     });
 </script>
 
-<article class="card" data-status={entry.status} aria-busy={busy || undefined}>
+<article class="card {layout}" data-status={entry.status} aria-busy={busy || undefined}>
+    {#if handle}<div class="handle">{@render handle()}</div>{/if}
     <span class="icon"><ServerIcon /></span>
 
     <div class="body">
         <div class="heading">
             <h3 class="address">{address}</h3>
             <Badge variant={status.variant} dot>{status.label}</Badge>
+            {#if isLocal}<Badge variant="accent">{t('servers.card.local')}</Badge>{/if}
+            {#if entry.status === 'connected' && entry.tunnel?.agent}
+                <span class="version">{t('servers.card.agentVersion', { version: entry.tunnel.agent.version })}</span>
+            {/if}
         </div>
         {#if detail}
             <p class="detail" class:problem={entry.status === 'error' || entry.status === 'agentMissing'}>
@@ -125,6 +147,39 @@
         border-radius: var(--radius-lg);
     }
 
+    /* Cuadrícula: apilado vertical, acciones al pie. */
+    .tile {
+        position: relative;
+        flex-direction: column;
+        align-items: stretch;
+        height: 100%;
+    }
+
+    .tile .icon {
+        align-self: flex-start;
+    }
+
+    .tile .body {
+        flex: 1;
+    }
+
+    .tile .actions {
+        justify-content: flex-end;
+        padding-top: var(--space-3);
+        border-top: var(--border-width) solid var(--color-border);
+    }
+
+    .handle {
+        display: inline-flex;
+        flex-shrink: 0;
+    }
+
+    .tile .handle {
+        position: absolute;
+        top: var(--space-2);
+        right: var(--space-2);
+    }
+
     .icon {
         display: inline-flex;
         color: var(--color-text-subtle);
@@ -157,6 +212,12 @@
         font-weight: var(--font-weight-semibold);
         text-overflow: ellipsis;
         white-space: nowrap;
+    }
+
+    .version {
+        font-family: var(--font-mono);
+        font-size: var(--font-size-xs);
+        color: var(--color-text-muted);
     }
 
     .detail {

@@ -4,13 +4,25 @@
     Rust valida la llave, la guarda cifrada y registra el servidor. A partir de ahí el servidor queda
     en la lista aunque la conexión falle (p. ej. el agente aún no está instalado): la conexión la
     gestiona `servers` ($lib/servers/servers.svelte), no este formulario.
+
+    Si el host es este equipo (`localhost`, 127.x.x.x, ::1), no hace falta túnel ni llave: solo se
+    pide el puerto del agente y el servidor se registra como local.
 -->
 <script lang="ts">
     import { untrack } from 'svelte';
 
     import { describeError } from '$lib/http';
     import { t } from '$lib/i18n';
-    import { type KeySource, saveKey, type ServerProfile, type SshTarget, toTunnelError } from '$lib/ssh';
+    import {
+        addLocalServer,
+        AGENT_PORT,
+        isLoopbackHost,
+        type KeySource,
+        saveKey,
+        type ServerProfile,
+        type SshTarget,
+        toTunnelError,
+    } from '$lib/ssh';
 
     import Button from '../ui/Button.svelte';
     import Checkbox from '../ui/Checkbox.svelte';
@@ -41,12 +53,15 @@
     let passphrase = $state('');
     let rememberPassphrase = $state(false);
     let askPassphrase = $state(false);
+    let agentPort = $state<number | null>(AGENT_PORT);
 
     let busy = $state(false);
     let fieldErrors = $state<Partial<Record<Field, string>>>({});
     let formError = $state<string>();
 
     const target = $derived<Required<SshTarget>>({ host: host.trim(), port: port ?? 22, username: username.trim() });
+    /** Este mismo equipo: sin túnel ni llave. */
+    const local = $derived(isLoopbackHost(host));
 
     const sources = $derived([
         { value: 'file' as const, label: t('servers.connect.sources.file') },
@@ -60,14 +75,20 @@
         return keyContent.trim() ? { kind: 'inline', content: keyContent } : undefined;
     }
 
+    const validPort = (value: number | null) =>
+        value !== null && Number.isInteger(value) && value >= 1 && value <= 65535;
+
+    function validateLocal(): boolean {
+        fieldErrors = validPort(agentPort) ? {} : { port: t('errors.tunnel.INVALID_TARGET') };
+        return validPort(agentPort);
+    }
+
     function validate(): KeySource | undefined {
         const required = t('servers.connect.required');
         const errors: Partial<Record<Field, string>> = {};
         if (!target.host) errors.host = required;
         if (!target.username) errors.username = required;
-        if (port === null || !Number.isInteger(port) || port < 1 || port > 65535) {
-            errors.port = t('errors.tunnel.INVALID_TARGET');
-        }
+        if (!validPort(port)) errors.port = t('errors.tunnel.INVALID_TARGET');
         const keySourceValue = keySource();
         if (!keySourceValue) errors.key = required;
         fieldErrors = errors;
@@ -99,9 +120,25 @@
         }
     }
 
+    async function submitLocal(): Promise<void> {
+        if (!validateLocal() || agentPort === null) return;
+        busy = true;
+        try {
+            onSaved?.(await addLocalServer(agentPort), undefined);
+        } catch (error) {
+            handle(error);
+        } finally {
+            busy = false;
+        }
+    }
+
     async function submit(event: SubmitEvent): Promise<void> {
         event.preventDefault();
         formError = undefined;
+        if (local) {
+            await submitLocal();
+            return;
+        }
         const keySourceValue = validate();
         if (!keySourceValue) return;
         busy = true;
@@ -134,68 +171,84 @@
             />
         </div>
         <div class="port">
-            <Input
-                label={t('servers.connect.port')}
-                type="number"
-                min={1}
-                max={65535}
-                required
-                error={fieldErrors.port}
-                bind:value={port}
-            />
+            {#if local}
+                <Input
+                    label={t('servers.connect.agentPort')}
+                    type="number"
+                    min={1}
+                    max={65535}
+                    required
+                    error={fieldErrors.port}
+                    bind:value={agentPort}
+                />
+            {:else}
+                <Input
+                    label={t('servers.connect.port')}
+                    type="number"
+                    min={1}
+                    max={65535}
+                    required
+                    error={fieldErrors.port}
+                    bind:value={port}
+                />
+            {/if}
         </div>
     </div>
 
-    <Input
-        label={t('servers.connect.username')}
-        placeholder={t('servers.connect.usernamePlaceholder')}
-        required
-        autocomplete="off"
-        spellcheck="false"
-        error={fieldErrors.username}
-        bind:value={username}
-    />
-
-    <div class="key">
-        <ToggleGroup label={t('servers.connect.keySource')} options={sources} bind:value={source} />
-
-        {#if source === 'file'}
-            <FilePicker
-                label={t('servers.connect.keyFile')}
-                hint={t('servers.connect.storageHint')}
-                required
-                error={fieldErrors.key}
-                bind:value={keyPaths}
-            />
-        {:else if source === 'inline'}
-            <Textarea
-                label={t('servers.connect.keyContent')}
-                hint={t('servers.connect.keyContentHint')}
-                placeholder={t('servers.connect.keyContentPlaceholder')}
-                required
-                monospace
-                rows={6}
-                spellcheck="false"
-                autocomplete="off"
-                error={fieldErrors.key}
-                bind:value={keyContent}
-            />
-        {:else}
-            <p class="note" class:error={Boolean(fieldErrors.key)} role={fieldErrors.key ? 'alert' : undefined}>
-                {fieldErrors.key ?? t('servers.connect.defaultKeyHint')}
-            </p>
-        {/if}
-    </div>
-
-    {#if askPassphrase}
+    {#if local}
+        <p class="local-note">{t('servers.connect.localNote')}</p>
+    {:else}
         <Input
-            label={t('servers.connect.passphrase')}
-            type="password"
+            label={t('servers.connect.username')}
+            placeholder={t('servers.connect.usernamePlaceholder')}
+            required
             autocomplete="off"
-            error={fieldErrors.passphrase}
-            bind:value={passphrase}
+            spellcheck="false"
+            error={fieldErrors.username}
+            bind:value={username}
         />
-        <Checkbox label={t('servers.connect.rememberPassphrase')} bind:checked={rememberPassphrase} />
+
+        <div class="key">
+            <ToggleGroup label={t('servers.connect.keySource')} options={sources} bind:value={source} />
+
+            {#if source === 'file'}
+                <FilePicker
+                    label={t('servers.connect.keyFile')}
+                    hint={t('servers.connect.storageHint')}
+                    required
+                    error={fieldErrors.key}
+                    bind:value={keyPaths}
+                />
+            {:else if source === 'inline'}
+                <Textarea
+                    label={t('servers.connect.keyContent')}
+                    hint={t('servers.connect.keyContentHint')}
+                    placeholder={t('servers.connect.keyContentPlaceholder')}
+                    required
+                    monospace
+                    rows={6}
+                    spellcheck="false"
+                    autocomplete="off"
+                    error={fieldErrors.key}
+                    bind:value={keyContent}
+                />
+            {:else}
+                <p class="note" class:error={Boolean(fieldErrors.key)} role={fieldErrors.key ? 'alert' : undefined}>
+                    {fieldErrors.key ?? t('servers.connect.defaultKeyHint')}
+                </p>
+            {/if}
+        </div>
+
+        {#if askPassphrase}
+            <Input
+                label={t('servers.connect.passphrase')}
+                type="password"
+                autocomplete="off"
+                error={fieldErrors.passphrase}
+                bind:value={passphrase}
+            />
+            <Checkbox label={t('servers.connect.rememberPassphrase')} bind:checked={rememberPassphrase} />
+        {/if}
     {/if}
 
     {#if formError}
@@ -241,6 +294,14 @@
 
     .note.error {
         color: var(--color-danger);
+    }
+
+    .local-note {
+        padding: var(--space-3);
+        font-size: var(--font-size-sm);
+        color: var(--color-text);
+        background-color: var(--color-info-subtle);
+        border-radius: var(--radius-md);
     }
 
     .alert {

@@ -29,13 +29,28 @@ export interface KeySummary {
     encrypted: boolean;
 }
 
-/** Servidor configurado (sin secretos). `id` es `usuario@host:puerto`, normalizado por Rust. */
+/**
+ * Servidor configurado (sin secretos).
+ * - `ssh`: un VPS al que se llega por túnel. `id` es `usuario@host:puerto`, normalizado por Rust.
+ * - `local`: este equipo; sin túnel ni llave. `id` es `local:<puerto>` y `port` es el del agente.
+ */
 export interface ServerProfile {
     id: string;
+    kind: 'ssh' | 'local';
     host: string;
     port: number;
     username: string;
 }
+
+/** Espejo de `shared::AgentStatus`. */
+export interface AgentStatus {
+    name: string;
+    version: string;
+    status: 'ready';
+}
+
+/** Puerto del agente por defecto (`BLACKSMITH_BIND_ADDR`). */
+export const AGENT_PORT = 4040;
 
 export interface SavedServer {
     server: ServerProfile;
@@ -51,6 +66,8 @@ export interface TunnelInfo {
     /** Puerto de 127.0.0.1 en este equipo que llega al agente. */
     localPort: number;
     remotePort: number;
+    /** Lo que respondió el agente al conectar. */
+    agent: AgentStatus | null;
 }
 
 export interface TunnelClosed {
@@ -91,9 +108,24 @@ export async function listServers(): Promise<ServerProfile[]> {
     return call('servers_list', {});
 }
 
-/** Quita el servidor (cierra su túnel, borra su llave). Acción destructiva: confirmar antes. */
-export function removeServer(target: SshTarget): Promise<boolean> {
-    return call('server_remove', { target });
+/** Quita el servidor (si es SSH, cierra su túnel y borra su llave). Acción destructiva: confirmar antes. */
+export function removeServer(id: string): Promise<boolean> {
+    return call('server_remove', { id });
+}
+
+/** Guarda el nuevo orden. `ids` debe contener exactamente los servidores guardados. */
+export function reorderServers(ids: readonly string[]): Promise<ServerProfile[]> {
+    return call('servers_reorder', { ids });
+}
+
+/** Registra este equipo como servidor: sin túnel, directo al agente en 127.0.0.1:<puerto>. */
+export function addLocalServer(port: number = AGENT_PORT): Promise<ServerProfile> {
+    return call('server_add_local', { port });
+}
+
+/** Comprueba el agente local (solo 127.0.0.1). */
+export function localAgentStatus(port: number = AGENT_PORT): Promise<AgentStatus> {
+    return call('local_agent_status', { port });
 }
 
 /** Destino SSH de un servidor configurado. */

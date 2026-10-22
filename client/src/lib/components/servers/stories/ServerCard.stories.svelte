@@ -14,7 +14,15 @@
 
     import ServerCard from '../ServerCard.svelte';
 
-    const profile = { id: 'deploy@vps.example.com:22', host: 'vps.example.com', port: 22, username: 'deploy' };
+    const profile = {
+        id: 'deploy@vps.example.com:22',
+        kind: 'ssh' as const,
+        host: 'vps.example.com',
+        port: 22,
+        username: 'deploy',
+    };
+    const local = { id: 'local:4040', kind: 'local' as const, host: 'localhost', port: 4040, username: '' };
+    const agent = { name: 'blacksmith-agent', version: '1.0.0', status: 'ready' as const };
     const states: { name: string; entry: ServerEntry }[] = [
         { name: 'Desconectado', entry: { profile, status: 'disconnected' } },
         { name: 'Conectando', entry: { profile, status: 'connecting' } },
@@ -23,7 +31,7 @@
             entry: {
                 profile,
                 status: 'connected',
-                tunnel: { targetId: profile.id, localPort: 51234, remotePort: 4040 },
+                tunnel: { targetId: profile.id, localPort: 51234, remotePort: 4040, agent },
             },
         },
         { name: 'Agente no configurado', entry: { profile, status: 'agentMissing' } },
@@ -45,6 +53,15 @@
                 errorCode: 'HOST_KEY_CHANGED',
             },
         },
+        {
+            name: 'Local conectado',
+            entry: {
+                profile: local,
+                status: 'connected',
+                tunnel: { targetId: local.id, localPort: 4040, remotePort: 4040, agent },
+            },
+        },
+        { name: 'Local sin agente', entry: { profile: local, status: 'agentMissing' } },
     ];
     const noop = () => {};
 </script>
@@ -57,7 +74,26 @@
     </Story>
 {/each}
 
+<Story name="Tarjeta de cuadrícula" layout="grid">
+    {#each states.slice(0, 3) as { name, entry } (name)}
+        <div class="tile">
+            <ServerCard
+                {entry}
+                layout="tile"
+                onConnect={noop}
+                onDisconnect={noop}
+                onRemove={noop}
+                onForgetHostKey={noop}
+            />
+        </div>
+    {/each}
+</Story>
+
 <style>
+    .tile {
+        width: var(--layout-card-min-width);
+    }
+
     .frame {
         width: min(100%, var(--layout-content-max-width));
     }

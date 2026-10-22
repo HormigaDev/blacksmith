@@ -15,6 +15,7 @@ use tokio::{
 };
 
 use super::*;
+use crate::agent_probe::tests::{health_response, HEALTH_BODY};
 use crate::ssh::{
     host_keys::HostKeyStore,
     key::fixtures::{
@@ -135,8 +136,35 @@ impl Vps {
     }
 }
 
-/// "Agente" de test: devuelve lo que recibe.
+/// "Agente" de test: responde al health como el agente real y, a cualquier otra cosa, con eco
+/// (para comprobar que el reenvío transporta los bytes tal cual).
 async fn echo_agent() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut first = [0u8; 1024];
+                let Ok(read) = socket.read(&mut first).await else {
+                    return;
+                };
+                let head = first.get(..read).unwrap_or_default();
+                if head.starts_with(b"GET /api/v1/health ") {
+                    let reply = health_response(HEALTH_BODY);
+                    let _ = socket.write_all(reply.as_bytes()).await;
+                    return;
+                }
+                let _ = socket.write_all(head).await;
+                let (mut read, mut write) = socket.split();
+                let _ = tokio::io::copy(&mut read, &mut write).await;
+            });
+        }
+    });
+    port
+}
+
+/// Otro servicio en el puerto del agente: devuelve lo que recibe, sin hablar HTTP.
+async fn plain_echo() -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
@@ -331,6 +359,28 @@ async fn distingue_servidor_inalcanzable_de_agente_caido() {
         matches!(result, Err(CommandError::AgentUnreachable)),
         "{result:?}"
     );
+
+    // Algo escucha en ese puerto, pero no es el agente.
+    let other = plain_echo().await;
+    let result = fixture.open(vps.port, other, CLIENT_ED25519).await;
+    assert!(
+        matches!(result, Err(CommandError::AgentInvalid)),
+        "{result:?}"
+    );
+}
+
+#[tokio::test]
+async fn devuelve_el_estado_del_agente() {
+    let vps = Vps::start(HOST_ED25519).await;
+    let agent = echo_agent().await;
+    let fixture = Fixture::new();
+    fixture.trust_host(vps.port, agent).await;
+    let tunnel = fixture.open(vps.port, agent, CLIENT_ED25519).await.unwrap();
+    assert_eq!(
+        tunnel.agent().map(|agent| agent.version.as_str()),
+        Some("1.0.0")
+    );
+    tunnel.close().await;
 }
 
 #[tokio::test]

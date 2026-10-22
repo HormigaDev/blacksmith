@@ -1,11 +1,16 @@
 export {
+    addLocalServer,
+    AGENT_PORT,
+    type AgentStatus,
     closeTunnel,
+    localAgentStatus,
     forgetHostKey,
     forgetKey,
     type KeyInfo,
     keyInfo,
     listServers,
     removeServer,
+    reorderServers,
     type SavedServer,
     type ServerProfile,
     targetOf,
@@ -22,3 +27,4 @@ export {
     tunnelStatus,
 } from './api';
 export { type HostKeyDetails, toTunnelError, TUNNEL_ERROR_CODES, TunnelError, type TunnelErrorCode } from './errors';
+export { isLoopbackHost } from './target';

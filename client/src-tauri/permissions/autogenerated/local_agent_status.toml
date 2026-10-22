@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-local-agent-status"
+description = "Enables the local_agent_status command without any pre-configured scope."
+commands.allow = ["local_agent_status"]
+
+[[permission]]
+identifier = "deny-local-agent-status"
+description = "Denies the local_agent_status command without any pre-configured scope."
+commands.deny = ["local_agent_status"]

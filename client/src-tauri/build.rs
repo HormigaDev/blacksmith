@@ -10,7 +10,10 @@ const COMMANDS: &[&str] = &[
     "tunnel_close",
     "tunnel_status",
     "servers_list",
+    "servers_reorder",
     "server_remove",
+    "server_add_local",
+    "local_agent_status",
 ];
 
 fn main() {

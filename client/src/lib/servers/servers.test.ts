@@ -7,6 +7,8 @@ const api = vi.hoisted(() => ({
     closeTunnel: vi.fn(),
     removeServer: vi.fn(),
     forgetHostKey: vi.fn(),
+    localAgentStatus: vi.fn(),
+    reorderServers: vi.fn(),
     onTunnelClosed: vi.fn(async () => () => {}),
 }));
 
@@ -14,8 +16,16 @@ vi.mock('$lib/ssh', async (importOriginal) => ({ ...(await importOriginal<typeof
 
 const { servers } = await import('./servers.svelte');
 
-const PROFILE = { id: 'deploy@vps.example.com:22', host: 'vps.example.com', port: 22, username: 'deploy' };
-const TUNNEL = { targetId: PROFILE.id, localPort: 51234, remotePort: 4040 };
+const PROFILE = {
+    id: 'deploy@vps.example.com:22',
+    kind: 'ssh' as const,
+    host: 'vps.example.com',
+    port: 22,
+    username: 'deploy',
+};
+const LOCAL = { id: 'local:4040', kind: 'local' as const, host: 'localhost', port: 4040, username: '' };
+const AGENT = { name: 'blacksmith-agent', version: '1.0.0', status: 'ready' as const };
+const TUNNEL = { targetId: PROFILE.id, localPort: 51234, remotePort: 4040, agent: AGENT };
 const HOST_KEY = { algorithm: 'ssh-ed25519', fingerprint: 'SHA256:abc' };
 const reject = (code: string, details?: object) => Promise.reject({ code, message: code, details });
 
@@ -99,7 +109,87 @@ describe('servers', () => {
     test('quitar un servidor lo borra en Rust y de la lista', async () => {
         api.removeServer.mockResolvedValue(true);
         await servers.remove(PROFILE.id);
-        expect(api.removeServer).toHaveBeenCalledWith({ host: 'vps.example.com', port: 22, username: 'deploy' });
+        expect(api.removeServer).toHaveBeenCalledWith(PROFILE.id);
         expect(servers.entries).toEqual([]);
+    });
+
+    describe('servidor local', () => {
+        beforeEach(async () => {
+            api.listServers.mockResolvedValue([LOCAL]);
+            await servers.load();
+        });
+
+        test('conecta comprobando el agente, sin túnel', async () => {
+            api.localAgentStatus.mockResolvedValue(AGENT);
+            await servers.connect(LOCAL.id);
+            expect(api.localAgentStatus).toHaveBeenCalledWith(4040);
+            expect(api.openTunnel).not.toHaveBeenCalled();
+            expect(servers.find(LOCAL.id)).toMatchObject({
+                status: 'connected',
+                tunnel: { localPort: 4040, agent: AGENT },
+            });
+        });
+
+        test('sin agente en marcha queda como «agente no configurado»', async () => {
+            api.localAgentStatus.mockReturnValue(reject('AGENT_UNREACHABLE'));
+            await servers.connect(LOCAL.id);
+            expect(servers.find(LOCAL.id)?.status).toBe('agentMissing');
+        });
+
+        test('otro servicio en el puerto es un error explicado', async () => {
+            api.localAgentStatus.mockReturnValue(reject('AGENT_INVALID'));
+            await servers.connect(LOCAL.id);
+            expect(servers.find(LOCAL.id)).toMatchObject({ status: 'error', errorCode: 'AGENT_INVALID' });
+        });
+
+        test('desconectar no llama a Rust: no hay túnel', async () => {
+            api.localAgentStatus.mockResolvedValue(AGENT);
+            await servers.connect(LOCAL.id);
+            await servers.disconnect(LOCAL.id);
+            expect(api.closeTunnel).not.toHaveBeenCalled();
+            expect(servers.find(LOCAL.id)?.status).toBe('disconnected');
+        });
+    });
+
+    describe('orden y vista', () => {
+        const B = { ...PROFILE, id: 'deploy@b.example.com:22', host: 'b.example.com' };
+
+        beforeEach(async () => {
+            api.listServers.mockResolvedValue([PROFILE, B, LOCAL]);
+            await servers.load();
+        });
+
+        const ids = () => servers.entries.map((entry) => entry.profile.id);
+
+        test('mueve en local y persiste el orden completo', async () => {
+            servers.move(2, 0);
+            expect(ids()).toEqual([LOCAL.id, PROFILE.id, B.id]);
+            api.reorderServers.mockResolvedValue([]);
+            await servers.saveOrder();
+            expect(api.reorderServers).toHaveBeenCalledWith([LOCAL.id, PROFILE.id, B.id]);
+        });
+
+        test('si Rust rechaza el orden, vuelve al guardado', async () => {
+            servers.move(0, 2);
+            api.reorderServers.mockReturnValue(reject('INVALID_TARGET'));
+            await servers.saveOrder();
+            expect(ids()).toEqual([PROFILE.id, B.id, LOCAL.id]);
+        });
+
+        test('ignora movimientos fuera de rango', () => {
+            servers.move(0, 9);
+            servers.move(9, 0);
+            expect(ids()).toEqual([PROFILE.id, B.id, LOCAL.id]);
+        });
+
+        test('recuerda la vista elegida', () => {
+            const stored = new Map<string, string>();
+            vi.stubGlobal('localStorage', { setItem: (key: string, value: string) => stored.set(key, value) });
+            servers.view = 'grid';
+            expect(servers.view).toBe('grid');
+            expect(stored.get('blacksmith:servers-view')).toBe('grid');
+            servers.view = 'list';
+            vi.unstubAllGlobals();
+        });
     });
 });

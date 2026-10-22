@@ -25,6 +25,7 @@ export const TUNNEL_ERROR_CODES = [
     'HOST_KEY_NOT_PENDING',
     'AUTH_REJECTED',
     'AGENT_UNREACHABLE',
+    'AGENT_INVALID',
     'PORT_IN_USE',
     'INTERNAL',
 ] as const;

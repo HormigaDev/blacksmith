@@ -1,17 +1,24 @@
 //! Comandos de Tauri: la frontera con la webview. Todo lo que llega se valida; nada secreto vuelve.
 //! Contrato en TypeScript: client/src/lib/ssh/api.ts.
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    net::{Ipv4Addr, SocketAddr},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use serde::{Deserialize, Serialize};
+use shared::AgentStatus;
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::Mutex;
 use zeroize::Zeroizing;
 
 use crate::{
+    agent_probe,
     error::{CommandError, CommandResult},
     secrets::{Credential, Vault},
-    servers::{ServerProfile, ServerStore},
+    servers::{ServerKind, ServerProfile, ServerStore},
     ssh::{
         host_keys::{HostKeyStore, PresentedKey},
         key::{self, KeySource, KeySummary},
@@ -81,6 +88,8 @@ pub struct TunnelInfo {
     target_id: String,
     local_port: u16,
     remote_port: u16,
+    /// Lo que respondió el agente al abrir el túnel.
+    agent: Option<AgentStatus>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -133,7 +142,7 @@ pub async fn ssh_save_key(
             summary: summary.clone(),
         };
         vault.put(&target.id(), &credential)?;
-        let server = servers.upsert(&target)?;
+        let server = servers.upsert(ServerProfile::from(&target))?;
         Ok(SavedServer {
             server,
             key: summary,
@@ -149,32 +158,81 @@ pub async fn servers_list(state: State<'_, AppState>) -> CommandResult<Vec<Serve
     blocking(move || servers.list()).await
 }
 
-/// Quita el servidor: cierra su túnel si está abierto y borra su llave y su registro. La llave
-/// del servidor (huella confirmada) se conserva: si se vuelve a añadir, sigue protegido contra
-/// suplantaciones. Acción destructiva: la interfaz la confirma antes.
+/// Guarda el nuevo orden de la lista. Devuelve la lista ya ordenada.
+#[tauri::command]
+pub async fn servers_reorder(
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+) -> CommandResult<Vec<ServerProfile>> {
+    let servers = Arc::clone(&state.servers);
+    blocking(move || servers.reorder(&ids)).await
+}
+
+/// Registra este mismo equipo como servidor: sin túnel ni llave, se habla con el agente
+/// directamente en `127.0.0.1:<puerto>` (4040 por defecto). Para probar el cliente con un agente
+/// local.
+#[tauri::command]
+pub async fn server_add_local(
+    state: State<'_, AppState>,
+    port: Option<u16>,
+) -> CommandResult<ServerProfile> {
+    let port = agent_port(port)?;
+    let servers = Arc::clone(&state.servers);
+    blocking(move || servers.upsert(ServerProfile::local(port))).await
+}
+
+/// Estado del agente local. Solo consulta `127.0.0.1`: el comando no acepta otro host, así que no
+/// sirve para sondear otras máquinas.
+#[tauri::command]
+pub async fn local_agent_status(port: Option<u16>) -> CommandResult<AgentStatus> {
+    let port = agent_port(port)?;
+    agent_probe::probe(
+        SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
+        agent_probe::PROBE_TIMEOUT,
+    )
+    .await
+}
+
+fn agent_port(port: Option<u16>) -> CommandResult<u16> {
+    match port.unwrap_or(AGENT_PORT) {
+        0 => Err(CommandError::InvalidTarget("port")),
+        port => Ok(port),
+    }
+}
+
+/// Quita el servidor. Si es SSH, cierra su túnel y borra su llave; la llave del servidor (huella
+/// confirmada) se conserva, para que siga protegido contra suplantaciones si se vuelve a añadir.
+/// Acción destructiva: la interfaz la confirma antes.
 #[tauri::command]
 pub async fn server_remove(
     app: AppHandle,
     state: State<'_, AppState>,
-    target: TargetInput,
+    id: String,
 ) -> CommandResult<bool> {
-    let target = target.validate()?;
-    let id = target.id();
-    if let Some(open) = state.tunnels.lock().await.remove(&id) {
-        open.tunnel.close().await;
-        let _ = app.emit(
-            TUNNEL_CLOSED_EVENT,
-            TunnelClosed {
-                target_id: id.clone(),
-                reason: CloseReason::Requested,
-            },
-        );
+    let servers = Arc::clone(&state.servers);
+    let lookup = id.clone();
+    let Some(profile) = blocking(move || servers.get(&lookup)).await? else {
+        return Ok(false);
+    };
+    if profile.kind == ServerKind::Ssh {
+        if let Some(open) = state.tunnels.lock().await.remove(&id) {
+            open.tunnel.close().await;
+            let _ = app.emit(
+                TUNNEL_CLOSED_EVENT,
+                TunnelClosed {
+                    target_id: id.clone(),
+                    reason: CloseReason::Requested,
+                },
+            );
+        }
     }
     let vault = Arc::clone(&state.vault);
     let servers = Arc::clone(&state.servers);
     blocking(move || {
-        vault.delete(&id)?;
-        servers.remove(&target)
+        if profile.kind == ServerKind::Ssh {
+            vault.delete(&id)?;
+        }
+        servers.remove(&id)
     })
     .await
 }
@@ -359,6 +417,7 @@ fn info(id: &str, tunnel: &Tunnel) -> TunnelInfo {
         target_id: id.to_owned(),
         local_port: tunnel.local_port(),
         remote_port: AGENT_PORT,
+        agent: tunnel.agent().cloned(),
     }
 }
 

@@ -75,6 +75,7 @@
     --layout-header-height: 3rem;
     --layout-sidebar-width: 15rem;
     --layout-content-max-width: 80rem;
+    --layout-card-min-width: 18rem;
     --control-height-sm: 1.75rem;
     --control-height-md: 2.25rem;
     --control-height-lg: 2.75rem;

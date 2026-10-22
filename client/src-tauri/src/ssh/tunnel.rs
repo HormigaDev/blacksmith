@@ -4,9 +4,10 @@
 //! 1. Reserva el puerto local (127.0.0.1): si está ocupado no se llega a abrir SSH.
 //! 2. Conecta con timeout y verifica la llave del servidor (`HostKeyStore`).
 //! 3. Se autentica con la llave del usuario.
-//! 4. Comprueba que el agente responde a través del túnel: así se distingue «servidor
-//!    inalcanzable» de «agente caído».
-//! 5. Reenvía cada conexión local por un canal `direct-tcpip` hasta que se cierra o se pierde.
+//! 4. Empieza a reenviar cada conexión local por un canal `direct-tcpip`.
+//! 5. Comprueba que el agente responde a través del túnel (`GET /api/v1/health`): así se
+//!    distingue «servidor inalcanzable» de «agente caído» y de «otro servicio en el puerto». Si no
+//!    responde, el túnel se cierra.
 
 use std::{
     net::{Ipv4Addr, SocketAddr},
@@ -26,11 +27,13 @@ use tokio::{
     task::{JoinHandle, JoinSet},
 };
 
+use shared::AgentStatus;
+
 use super::{
     host_keys::{HostKeyStore, Verdict},
     target::SshTarget,
 };
-use crate::error::CommandError;
+use crate::{agent_probe, error::CommandError};
 
 /// El agente escucha solo en loopback del VPS (ver CLAUDE.md, arquitectura Zero-Trust).
 pub const AGENT_HOST: &str = "127.0.0.1";
@@ -125,6 +128,7 @@ pub struct Tunnel {
     stop: watch::Sender<bool>,
     lost: watch::Receiver<bool>,
     forwarder: JoinHandle<()>,
+    agent: Option<AgentStatus>,
 }
 
 impl std::fmt::Debug for Tunnel {
@@ -192,26 +196,6 @@ impl Tunnel {
         }
 
         let handle = Arc::new(handle);
-        let probe = tokio::time::timeout(
-            config.connect_timeout,
-            handle.channel_open_direct_tcpip(
-                config.remote_host.clone(),
-                u32::from(config.remote_port),
-                local_addr.ip().to_string(),
-                u32::from(local_addr.port()),
-            ),
-        )
-        .await;
-        match probe {
-            Ok(Ok(channel)) => {
-                let _ = channel.close().await;
-            }
-            Ok(Err(_)) | Err(_) => {
-                let _ = handle.disconnect(Disconnect::ByApplication, "", "es").await;
-                return Err(CommandError::AgentUnreachable);
-            }
-        }
-
         let (stop_tx, stop_rx) = watch::channel(false);
         let forwarder = tokio::spawn(forward_loop(
             listener,
@@ -222,13 +206,32 @@ impl Tunnel {
             lost_rx.clone(),
         ));
 
-        Ok(Self {
+        let mut tunnel = Self {
             local_addr,
             handle,
             stop: stop_tx,
             lost: lost_rx,
             forwarder,
-        })
+            agent: None,
+        };
+
+        // El túnel solo cuenta como abierto si el agente responde a través de él. Si no, se cierra:
+        // el servidor sigue guardado y el usuario puede reintentar cuando el agente esté en marcha.
+        match agent_probe::probe(local_addr, config.connect_timeout).await {
+            Ok(agent) => {
+                tunnel.agent = Some(agent);
+                Ok(tunnel)
+            }
+            Err(error) => {
+                tunnel.close().await;
+                Err(error)
+            }
+        }
+    }
+
+    /// Estado que devolvió el agente al abrir el túnel.
+    pub fn agent(&self) -> Option<&AgentStatus> {
+        self.agent.as_ref()
     }
 
     pub fn local_port(&self) -> u16 {
