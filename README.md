@@ -27,6 +27,7 @@
   - [3. Configure the agent](#3-configure-the-agent)
   - [4. Install nginx integration when needed](#4-install-nginx-integration-when-needed)
   - [5. Register and deploy a service](#5-register-and-deploy-a-service)
+- [Configure GitHub webhooks](#configure-github-webhooks)
 - [Development](#development)
 - [Repository map](#repository-map)
 - [Security](#security)
@@ -274,6 +275,67 @@ sh deploy/nginx/install.sh
 The agent generates nginx configuration from validated site data. It supports static roots,
 HTTP upstreams, WebSockets, and optional HTTPS through certbot. The administration API is not
 published by this setup.
+
+## Configure GitHub webhooks
+
+The webhook signature uses a dedicated HMAC secret. It is **not** the GitHub user token, the
+OAuth client secret, or the private key of a GitHub App. Blacksmith does not need and must never
+receive the private key of the BBEL Blacksmith App.
+
+The default BBEL Blacksmith App cannot give end users its webhook secret. To use automatic
+deployments safely, create and manage your own GitHub App:
+
+1. Open GitHub **Settings → Developer settings → GitHub Apps → New GitHub App**.
+2. Set a descriptive name and homepage URL for your project.
+3. Enable **Webhook** and set the callback URL to
+   `https://hooks.example.com/api/webhooks/github`.
+4. Generate a random webhook secret and keep it available while configuring the app and server:
+
+5. Configure the app's repository permissions for the repositories it will manage. For
+   automatic deploy-key registration, grant **Administration: Read and write** and install the
+   app only on the repositories that need it. This permission is powerful because it can manage
+   repository settings; do not grant it to the default BBEL Blacksmith App.
+6. Install the app on the selected account or repositories and use its **App ID/client ID and
+   slug** in the desktop client's GitHub settings. The app's private key is not required by
+   Blacksmith and should not be uploaded to the client or server.
+
+Store the webhook secret only on the VPS. Create the protected credential file as root:
+
+```sh
+install -d -o root -g root -m 0700 /etc/blacksmith/credentials
+umask 077
+openssl rand -hex 32 > /etc/blacksmith/credentials/github-webhook-secret
+chown root:root /etc/blacksmith/credentials/github-webhook-secret
+chmod 0600 /etc/blacksmith/credentials/github-webhook-secret
+cat /etc/blacksmith/credentials/github-webhook-secret
+```
+
+Copy the displayed value into the GitHub App's webhook configuration, then uncomment these lines in
+`deploy/blacksmith.service`:
+
+```ini
+LoadCredential=github-webhook-secret:/etc/blacksmith/credentials/github-webhook-secret
+Environment=BLACKSMITH_GITHUB_WEBHOOK_SECRET_FILE=/run/credentials/blacksmith.service/github-webhook-secret
+```
+
+Apply the unit and expose only the webhook endpoint through the nginx configuration:
+
+```sh
+install -m 0644 deploy/blacksmith.service /etc/systemd/system/blacksmith.service
+systemctl daemon-reload
+systemctl restart blacksmith.service
+nginx -t && systemctl reload nginx
+```
+
+The same secret can also be configured on a repository webhook under **Repository Settings →
+Webhooks**, if you do not use a GitHub App. In that case, the webhook still authenticates
+GitHub's signed request; it does not authenticate a desktop user. Keep the endpoint restricted
+to `POST /api/webhooks/github` and never expose the agent's administration port.
+
+When a service uses a deploy key, a custom GitHub App with **Administration: Read and write**
+automatically registers the generated read-only key in the selected repository. With the default
+BBEL Blacksmith App, the client deliberately falls back to the documented manual copy-and-paste
+flow because that permission is not granted.
 
 ### 5. Register and deploy a service
 

@@ -41,6 +41,14 @@ describe('DeployKeyPanel', () => {
         await expect.element(page.getByRole('status')).toHaveTextContent('Registrada en acme/api.');
     });
 
+    test('con App propia: registra automáticamente una llave recién generada', async () => {
+        const props = handlers();
+        await render(DeployKeyPanel, { key: null, repository: REPO, canRegister: true, ...props });
+        await page.getByRole('button', { name: 'Generar llave' }).click();
+        expect(props.onCreate).toHaveBeenCalledOnce();
+        expect(props.onRegister).toHaveBeenCalledOnce();
+    });
+
     test('si la App no tiene el permiso, pasa al registro manual', async () => {
         const props = handlers();
         props.onRegister.mockRejectedValueOnce(new TunnelError('GITHUB_PERMISSION_MISSING', 'sin permiso'));

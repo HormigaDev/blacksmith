@@ -147,9 +147,9 @@ Los datos compartidos (servidores, GitHub, servicios) viven en stores con runes 
 - Al guardar un despliegue o desplegar, `github_share_with_server` deja en el servidor la cuenta
   conectada: el token va de la bóveda de Rust al agente por el túnel, sin pasar por la webview.
   El servidor clona y prepara solo. Opcionalmente, un servicio usa su propia llave de despliegue
-  (`DeployKeyPanel`); `addDeployKey` la registra en un clic solo con una App propia con
-  _Administration_ (la de Blacksmith nunca lo pide) y, si falla con `GITHUB_PERMISSION_MISSING`, la
-  interfaz pasa al registro manual.
+  (`DeployKeyPanel`); con una App propia con _Administration_ la interfaz intenta registrarla
+  automáticamente (la App de Blacksmith nunca lo pide) y, si falla con
+  `GITHUB_PERMISSION_MISSING`, pasa al registro manual.
 
 ### Sitios de nginx
 

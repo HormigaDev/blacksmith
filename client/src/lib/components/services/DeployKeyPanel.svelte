@@ -48,8 +48,22 @@
         error = undefined;
         try {
             await onCreate();
+            if (canRegister) {
+                busy = 'register';
+                try {
+                    await onRegister();
+                    registered = true;
+                } catch (caught) {
+                    if (caught instanceof TunnelError && caught.code === 'GITHUB_PERMISSION_MISSING') {
+                        manual = true;
+                    } else {
+                        throw caught;
+                    }
+                }
+            }
         } catch (caught) {
-            error = describeError(caught);
+            if (caught instanceof TunnelError && caught.code === 'GITHUB_PERMISSION_MISSING') manual = true;
+            else error = describeError(caught);
         } finally {
             busy = null;
         }

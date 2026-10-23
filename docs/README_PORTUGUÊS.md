@@ -17,6 +17,7 @@
 - [Capturas de tela](#capturas-de-tela)
 - [Início rápido para usuários experientes](#início-rápido-para-usuários-experientes)
 - [Guia completo de configuração](#guia-completo-de-configuração)
+- [Configurar webhooks do GitHub](#configurar-webhooks-do-github)
 - [Desenvolvimento](#desenvolvimento)
 - [Mapa do repositório](#mapa-do-repositório)
 - [Segurança](#segurança)
@@ -266,6 +267,67 @@ sh deploy/nginx/install.sh
 O agente gera a configuração nginx a partir de dados de sites validados. Ele suporta raízes
 estáticas, upstreams HTTP, WebSockets e HTTPS opcional por meio do certbot. A API de
 administração não é publicada por essa configuração.
+
+## Configurar webhooks do GitHub
+
+A assinatura do webhook usa um segredo HMAC dedicado. **Não** é o token do usuário do GitHub,
+o segredo OAuth do cliente nem a chave privada de uma GitHub App. O Blacksmith não precisa e
+nunca deve receber a chave privada do app BBEL Blacksmith.
+
+O app BBEL Blacksmith padrão não pode entregar seu segredo de webhook aos usuários finais. Para
+usar deploys automáticos com segurança, crie e administre seu próprio GitHub App:
+
+1. Abra o GitHub em **Settings → Developer settings → GitHub Apps → New GitHub App**.
+2. Defina um nome descritivo e a URL principal do seu projeto.
+3. Ative **Webhook** e defina a URL de callback como
+   `https://hooks.example.com/api/webhooks/github`.
+4. Gere um segredo aleatório e mantenha-o disponível enquanto configura o app e o servidor.
+
+5. Configure as permissões de repositório para os repositórios que o app administrará. Para
+   registrar automaticamente chaves de deploy, conceda **Administration: Read and write** e
+   instale o app apenas nos repositórios necessários. Essa permissão é poderosa porque permite
+   administrar configurações do repositório; não a conceda ao app BBEL Blacksmith padrão.
+6. Instale o app na conta ou nos repositórios selecionados e use o **App ID/client ID e slug**
+   dele nas configurações do GitHub no cliente desktop. O Blacksmith não precisa da chave
+   privada do app e ela não deve ser enviada ao cliente ou ao servidor.
+
+Guarde o segredo do webhook somente no VPS. Crie o arquivo protegido como root:
+
+```sh
+install -d -o root -g root -m 0700 /etc/blacksmith/credentials
+umask 077
+openssl rand -hex 32 > /etc/blacksmith/credentials/github-webhook-secret
+chown root:root /etc/blacksmith/credentials/github-webhook-secret
+chmod 0600 /etc/blacksmith/credentials/github-webhook-secret
+cat /etc/blacksmith/credentials/github-webhook-secret
+```
+
+Copie o valor exibido para a configuração do webhook do GitHub e descomente estas linhas em
+`deploy/blacksmith.service`:
+
+```ini
+LoadCredential=github-webhook-secret:/etc/blacksmith/credentials/github-webhook-secret
+Environment=BLACKSMITH_GITHUB_WEBHOOK_SECRET_FILE=/run/credentials/blacksmith.service/github-webhook-secret
+```
+
+Aplique a unidade e exponha somente o endpoint do webhook por meio do nginx:
+
+```sh
+install -m 0644 deploy/blacksmith.service /etc/systemd/system/blacksmith.service
+systemctl daemon-reload
+systemctl restart blacksmith.service
+nginx -t && systemctl reload nginx
+```
+
+O mesmo segredo também pode ser configurado em um webhook do repositório em **Repository
+Settings → Webhooks**, se você não usar uma GitHub App. Nesse caso, o webhook continua
+autenticando a requisição assinada pelo GitHub; ele não autentica um usuário desktop. Mantenha o
+endpoint restrito a `POST /api/webhooks/github` e nunca exponha a porta de administração do agente.
+
+Quando um serviço usa uma chave de deploy, uma GitHub App própria com
+**Administration: Read and write** registra automaticamente a chave somente leitura gerada no
+repositório selecionado. Com o app BBEL Blacksmith padrão, o cliente volta deliberadamente ao
+fluxo documentado de copiar e colar porque essa permissão não é concedida.
 
 ### 5. Registrar e fazer deploy de um serviço
 
