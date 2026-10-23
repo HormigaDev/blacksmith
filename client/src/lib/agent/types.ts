@@ -66,11 +66,6 @@ export interface RepositoryRef {
 }
 
 /** `shared::ServiceDeployment`. */
-/**
- * `shared::RepositoryAccess`: cómo descarga el servidor el repositorio. `account`: por HTTPS, con
- * la cuenta de GitHub del servidor si es privado. `deployKey`: por SSH, con una llave de solo
- * lectura de ese repositorio.
- */
 export type RepositoryAccess = 'account' | 'deployKey';
 
 export interface ServiceDeployment {

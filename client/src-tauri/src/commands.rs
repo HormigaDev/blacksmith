@@ -179,7 +179,7 @@ pub async fn ssh_save_key(
     .await
 }
 
-/// Servidores configurados, en orden de alta.
+/// Servidores configurados en el orden guardado.
 #[tauri::command]
 pub async fn servers_list(state: State<'_, AppState>) -> CommandResult<Vec<ServerProfile>> {
     let servers = Arc::clone(&state.servers);

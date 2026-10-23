@@ -40,7 +40,7 @@ guarda un despliegue, un servicio arranca), todas las vistas lo reflejan al mome
 
 ## 3. Refresco periódico
 
-`ServiceEntry.watch()` refresca el estado del servicio cada 5 s (2 s durante un despliegue) y
+`ServiceEntry.watch()` refresca el estado del servicio cada 3 s (2 s durante un despliegue) y
 devuelve la función que lo detiene. Lleva un **contador de vistas**: varias pantallas pueden
 observar el mismo servicio sin multiplicar peticiones, y el temporizador se para cuando la última
 deja de mirar. Se usa dentro de un `$effect`, que lo detiene solo al salir:

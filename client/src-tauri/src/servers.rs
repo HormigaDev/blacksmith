@@ -80,7 +80,7 @@ impl ServerStore {
         }
     }
 
-    /// En orden de alta.
+    /// En el orden guardado por el usuario.
     pub fn list(&self) -> Result<Vec<ServerProfile>, CommandError> {
         let _guard = self.guard()?;
         Ok(self.load()?.servers)
@@ -90,7 +90,7 @@ impl ServerStore {
         Ok(self.list()?.into_iter().find(|server| server.id == id))
     }
 
-    /// Añade el servidor, o lo deja como está si ya existía.
+    /// Añade el servidor o reemplaza el perfil existente con el mismo identificador.
     pub fn upsert(&self, profile: ServerProfile) -> Result<ServerProfile, CommandError> {
         let _guard = self.guard()?;
         let mut store = self.load()?;

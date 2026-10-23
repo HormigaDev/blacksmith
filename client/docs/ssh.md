@@ -26,7 +26,7 @@ OpenSSL, bloqueante). Backend criptográfico `ring`, sin `aws-lc-rs` (que exige 
 | Secretos en memoria y en registros         | `Zeroizing` para llave y passphrase; `Debug` de las credenciales muestra `[REDACTED]`; los errores no llevan material secreto.                                                                                                                               |
 | Passphrase                                 | Solo se guarda si el usuario marca «recordar». Si no, se pide al conectar.                                                                                                                                                                                   |
 | Entradas maliciosas desde la webview       | `SshTarget` valida host (nombre DNS o IP), usuario (POSIX, nunca empieza por `-`) y puerto; las llaves se leen con un límite de 64 KiB.                                                                                                                      |
-| Comandos expuestos                         | Los 12 comandos están declarados en `build.rs` (app manifest): cada uno necesita un permiso explícito en `capabilities/default.json`.                                                                                                                        |
+| Comandos expuestos                         | Los comandos están declarados en `build.rs` (app manifest): cada uno necesita un permiso explícito en `capabilities/default.json`.                                                                                                                        |
 | Exposición del túnel                       | El puerto local escucha solo en `127.0.0.1`. Lo puede usar cualquier proceso local del usuario (igual que `ssh -L`); el agente sigue aplicando su guarda (sin `Origin`, `Host` loopback).                                                                    |
 
 ## 3. Errores
@@ -47,13 +47,10 @@ local ocupado. Al añadir un código: los tres sitios a la vez (si falta la trad
 | `removeServer`     | `server_remove`          | Por id. Si es SSH, cierra su túnel y borra su llave. Confirmar antes. La huella confirmada se conserva. |
 | `addLocalServer`   | `server_add_local`       | Registra este equipo (sin túnel ni llave).                                                              |
 | `localAgentStatus` | `local_agent_status`     | Comprueba el agente en `127.0.0.1:<puerto>`.                                                            |
-| `keyInfo`          | `ssh_key_info`           | Resumen de la llave guardada (nunca la llave).                                                          |
-| `forgetKey`        | `ssh_forget_key`         | Borra la llave guardada. Confirmar con `ConfirmDialog`.                                                 |
 | `openTunnel`       | `tunnel_open`            | Abre el túnel (idempotente).                                                                            |
 | `trustHostKey`     | `tunnel_trust_host`      | Confirma la huella recién presentada.                                                                   |
 | `forgetHostKey`    | `ssh_forget_host`        | Olvida la llave registrada del servidor. Confirmar antes.                                               |
 | `closeTunnel`      | `tunnel_close`           | Cierra el túnel y libera el puerto.                                                                     |
-| `tunnelStatus`     | `tunnel_status`          | Túnel abierto para ese destino, si lo hay.                                                              |
 | `onTunnelClosed`   | evento `tunnel://closed` | Cierre pedido o pérdida de conexión (keepalive cada 15 s, ~45 s).                                       |
 
 ## 5. Servidores guardados

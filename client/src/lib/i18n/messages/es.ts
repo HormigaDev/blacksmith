@@ -296,8 +296,6 @@ export default {
             memoryTrend: 'Memoria en los últimos minutos',
             memoryOfLimit: 'Memoria frente a su límite de {limit}',
             memoryOfHost: 'Memoria frente a la RAM del servidor ({total})',
-            limitCaption: 'De su límite ({limit})',
-            hostCaption: 'De la RAM del servidor ({total})',
             swap: 'Swap',
             swapDetail: 'De {total} en el servidor',
             noSwap: 'El servidor no tiene swap',

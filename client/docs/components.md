@@ -164,7 +164,7 @@ es un dato del sitio (`tlsDetail`), no un mensaje de error.
 - **Transporte inyectable.** La webview **no** puede llamar al agente directamente: la CSP solo
   permite IPC, y el agente rechaza toda petición con cabecera `Origin` (protección contra CSRF y
   DNS rebinding del túnel SSH). Para el agente se pasa un `fetch` que se ejecuta en Rust, con la
-  misma firma que el estándar (p. ej. el de `@tauri-apps/plugin-http`). **No se relaja la CSP ni
+  misma firma que el estándar. **No se relaja la CSP ni
   la guarda del agente para que funcione el `fetch` del navegador.**
 - **Errores tipados**, todos heredan de `RequestError`: `HttpError` (`status`, `code` estable de
   `shared::ErrorCode`, `detail` solo para registro), `NetworkError`, `TimeoutError`,

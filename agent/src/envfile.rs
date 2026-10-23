@@ -35,8 +35,7 @@ pub const MAX_KEY_BYTES: usize = 128;
 pub const MAX_VALUE_BYTES: usize = 32 * 1024;
 /// Muy por encima de lo que permiten los límites de arriba con claves y valores típicos.
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
-/// Variables comunes a todos los servicios del servidor. No empieza por `blacksmith-`, así que nunca
-/// coincide con el archivo de un servicio.
+/// Variables comunes a todos los servicios del servidor.
 pub const GLOBAL_FILE: &str = "global.env";
 /// Subdirectorio de los archivos de cada servicio: así ningún nombre de servicio choca con el
 /// global.

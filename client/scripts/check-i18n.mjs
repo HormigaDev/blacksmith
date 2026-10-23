@@ -9,6 +9,7 @@
 // 3. Claves de una traducción que no existen en es.ts, o con otra forma (texto vs plural).
 // 4. Traducciones cuyos `{parámetros}` no coinciden con los de es.ts.
 // 5. Un idioma con `available: true` incompleto.
+// 6. Claves de es.ts sin ningún consumidor en el código.
 // Avisos: claves sin traducir de los idiomas en preparación.
 
 import { readdirSync, readFileSync } from 'node:fs';
@@ -154,6 +155,20 @@ for (const file of walk(SRC).filter((path) => extname(path) === '.svelte' && !is
                 `${at(file, lineAt(match.index))}: ${match[1]}="${match[2]}" sin traducir: use ${match[1]}={t("…")}`,
             );
         }
+    }
+}
+
+// --- Claves sin uso ---
+const usedKeys = new Set();
+const dynamicPrefixes = [];
+for (const file of walk(SRC).filter((path) => !path.startsWith(MESSAGES) && /\.(svelte|ts)$/.test(path))) {
+    const source = readFileSync(file, 'utf8');
+    for (const match of source.matchAll(/\bt\(\s*['"]([^'"]+)['"]/g)) usedKeys.add(match[1]);
+    for (const match of source.matchAll(/\bt\(\s*`([^$`]*)\$\{/g)) dynamicPrefixes.push(match[1]);
+}
+for (const key of base.keys()) {
+    if (!usedKeys.has(key) && !dynamicPrefixes.some((prefix) => key.startsWith(prefix))) {
+        errors.push(`${at(join(MESSAGES, 'es.ts'))}: "${key}" no tiene consumidores`);
     }
 }
 

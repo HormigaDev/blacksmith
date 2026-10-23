@@ -12,7 +12,7 @@ pub const SERVICES_PATH: &str = "/api/v1/services";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceSummary {
-    /// Identificador corto (`[a-z0-9-]`, 1-48): define la unidad `blacksmith-<name>.service`.
+    /// Identificador corto (`[a-z0-9-]`, 1-48): define la unidad `blacksmith@<name>.service`.
     pub name: String,
     pub display_name: String,
     pub description: String,
@@ -88,7 +88,7 @@ pub struct ServiceStatusReport {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceResources {
-    /// Memoria en uso (incluye la caché de páginas de sus archivos), en bytes.
+    /// Memoria en uso del proceso, en bytes.
     pub memory_bytes: Option<u64>,
     /// Máximo de memoria desde que arrancó.
     pub memory_peak_bytes: Option<u64>,

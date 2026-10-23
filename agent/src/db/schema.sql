@@ -10,7 +10,7 @@
 CREATE TABLE services (
     -- AUTOINCREMENT: un id borrado no se reutiliza nunca.
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    -- Define la unidad: blacksmith-<slug>.service. Misma regla que `ServiceSlug`.
+    -- Define la unidad: blacksmith@<slug>.service. Misma regla que `ServiceSlug`.
     slug       TEXT    NOT NULL UNIQUE CHECK (
                    length(slug) BETWEEN 1 AND 48
                    AND slug NOT GLOB '*[^a-z0-9-]*'

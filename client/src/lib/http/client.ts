@@ -2,8 +2,8 @@
  * Cliente HTTP sobre la API estándar de Fetch. Sin dependencias.
  *
  * El transporte es inyectable (`fetch`): por defecto usa el `fetch` global, pero para hablar con
- * el agente se le pasa uno que se ejecuta en Rust (p. ej. el de `@tauri-apps/plugin-http`, con la
- * misma firma). La webview nunca llega al agente directamente: la CSP solo permite IPC y el agente
+ * el agente se le pasa uno que se ejecuta en Rust, con la misma firma. La webview nunca llega al
+ * agente directamente: la CSP solo permite IPC y el agente
  * rechaza cualquier petición con `Origin` (protección contra CSRF / DNS rebinding del túnel).
  *
  * Este módulo no importa nada en tiempo de ejecución, para poder probarlo con `node --test`.

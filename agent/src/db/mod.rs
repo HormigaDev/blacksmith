@@ -186,7 +186,7 @@ impl Database {
         .await
     }
 
-    /// Todos los servicios registrados, en orden de alta.
+    /// Todos los servicios registrados, en el orden almacenado.
     pub async fn services(&self) -> Result<Vec<Service>, DbError> {
         self.call(|connection| {
             let mut statement = connection.prepare(
@@ -743,15 +743,6 @@ impl Database {
         })
         .await
     }
-
-    /// Devuelve si existía.
-    #[cfg(test)]
-    pub async fn delete_service(&self, id: ServiceId) -> Result<bool, DbError> {
-        self.call(move |connection| {
-            Ok(connection.execute("DELETE FROM services WHERE id = ?1", [id.0])? > 0)
-        })
-        .await
-    }
 }
 
 /// Fila → [`Service`], revalidando cada campo con las reglas de su tipo.
@@ -1020,8 +1011,8 @@ mod tests {
             Some(api.clone())
         );
         assert_eq!(db.service_by_slug(slug("otra")).await.unwrap(), None);
-        assert!(db.delete_service(api.id).await.unwrap());
-        assert!(!db.delete_service(api.id).await.unwrap());
+        assert!(db.delete_service_by_slug(slug("api")).await.unwrap());
+        assert!(!db.delete_service_by_slug(slug("api")).await.unwrap());
         assert_eq!(db.service(api.id).await.unwrap(), None);
         assert_eq!(db.services().await.unwrap(), [web]);
     }
@@ -1064,7 +1055,11 @@ mod tests {
             .unwrap();
         assert_eq!(db.deployment(service.id).await.unwrap().unwrap().0, without);
 
-        assert!(db.delete_service(service.id).await.unwrap());
+        assert!(
+            db.delete_service_by_slug(service.slug.clone())
+                .await
+                .unwrap()
+        );
         assert_eq!(db.deployment(service.id).await.unwrap(), None);
     }
 
@@ -1145,7 +1140,7 @@ mod tests {
             .insert_service(slug("a"), name("A"), ServiceDescription::default())
             .await
             .unwrap();
-        db.delete_service(first.id).await.unwrap();
+        db.delete_service_by_slug(first.slug.clone()).await.unwrap();
         let second = db
             .insert_service(slug("a"), name("A"), ServiceDescription::default())
             .await
@@ -1337,7 +1332,9 @@ mod tests {
             db.limits(service.id).await.unwrap().unwrap().0,
             ResourceLimits::default()
         );
-        db.delete_service(service.id).await.unwrap();
+        db.delete_service_by_slug(service.slug.clone())
+            .await
+            .unwrap();
         assert_eq!(db.limits(service.id).await.unwrap(), None);
     }
 

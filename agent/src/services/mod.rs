@@ -6,7 +6,7 @@
 //!    los servicios salen de la base de datos y las acciones se piden por `id` de registro. Una
 //!    unidad desplegada a mano fuera del agente no aparece ni se puede nombrar desde el cliente.
 //! 2. **Solo se gestionan unidades con el prefijo reservado.** La unidad de un servicio se deriva
-//!    de su [`ServiceSlug`] (`blacksmith-<slug>.service`); nunca se acepta un nombre de unidad del
+//!    de su [`ServiceSlug`] (`blacksmith@<slug>.service`); nunca se acepta un nombre de unidad del
 //!    cliente. La regla de polkit (`deploy/polkit/10-blacksmith.rules`) aplica el mismo patrón
 //!    en el sistema, de modo que ni un agente comprometido puede tocar `ssh.service` y similares.
 
@@ -934,7 +934,7 @@ impl ServiceManager {
         })
     }
 
-    /// Servicios registrados, en orden de alta.
+    /// Servicios registrados, en el orden almacenado.
     pub async fn list(&self) -> Result<Vec<ServiceSummary>, ServiceError> {
         Ok(self.db.services().await?.iter().map(summary).collect())
     }

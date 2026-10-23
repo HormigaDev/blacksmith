@@ -98,7 +98,7 @@ export function saveKey(
     });
 }
 
-/** Servidores configurados, en orden de alta. Fuera de Tauri (navegador) no hay ninguno. */
+/** Servidores configurados. Fuera de Tauri (navegador) no hay ninguno. */
 export async function listServers(): Promise<ServerProfile[]> {
     if (!isTauri()) return [];
     return call('servers_list', {});

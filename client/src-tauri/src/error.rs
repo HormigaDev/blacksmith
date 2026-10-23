@@ -66,8 +66,6 @@ pub enum CommandError {
     ServerNotFound,
     #[error("el servidor no está conectado")]
     NotConnected,
-    /// El agente rechazó la petición antes de abrir el WebSocket (servicio no registrado, cupo
-    /// de visores lleno…). Trae el código del agente para traducirlo.
     #[error("falta configurar la GitHub App (Client ID y slug)")]
     GitHubNotConfigured,
     #[error("no hay ninguna cuenta de GitHub conectada")]

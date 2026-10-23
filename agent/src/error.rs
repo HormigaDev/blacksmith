@@ -87,14 +87,6 @@ pub enum AppError {
 }
 
 impl AppError {
-    #[cfg(test)]
-    pub fn internal(context: &'static str, source: impl Into<BoxError>) -> Self {
-        Self::Internal {
-            context,
-            source: source.into(),
-        }
-    }
-
     fn status(&self) -> StatusCode {
         match self {
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
@@ -355,10 +347,10 @@ mod tests {
 
     #[tokio::test]
     async fn los_errores_internos_no_filtran_detalles() {
-        let error = AppError::internal(
-            "leyendo la unidad",
-            io::Error::other("/etc/shadow: permiso denegado"),
-        );
+        let error = AppError::Internal {
+            context: "leyendo la unidad",
+            source: io::Error::other("/etc/shadow: permiso denegado").into(),
+        };
         let (status, body) = body(error).await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(body.code, ErrorCode::Internal);
@@ -375,7 +367,10 @@ mod tests {
 
     #[test]
     fn cadena_de_causas() {
-        let error = AppError::internal("arrancando", io::Error::other("disco lleno"));
+        let error = AppError::Internal {
+            context: "arrancando",
+            source: io::Error::other("disco lleno").into(),
+        };
         assert_eq!(DisplayChain(&error).to_string(), "arrancando: disco lleno");
     }
 }
