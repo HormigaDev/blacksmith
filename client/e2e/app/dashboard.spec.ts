@@ -65,7 +65,7 @@ test.describe('Ventana principal', () => {
         await page.goto('/');
         await waitForApp(page);
         await page.getByRole('button', { name: 'Idioma' }).click();
-        await expect(page.getByRole('option')).toHaveText(['Sistema', 'Español']);
+        await expect(page.getByRole('option')).toHaveText(['Sistema', 'Español', 'English', 'Português']);
     });
 
     test('las herramientas de desarrollo no existen en producción', async ({ page }) => {

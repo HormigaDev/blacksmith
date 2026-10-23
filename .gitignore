@@ -5,6 +5,7 @@ target
 .secrets/
 # Base de datos local del agente en desarrollo (BLACKSMITH_DATABASE_PATH)
 .data/
+tmp/
 
 # Archivos de configuración de inteligencia artificial
 **/.claude/

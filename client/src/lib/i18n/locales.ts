@@ -19,8 +19,8 @@ export interface LocaleDefinition {
 
 export const LOCALES = [
     { code: 'es', name: 'Español', intl: 'es', available: true },
-    { code: 'en', name: 'English', intl: 'en', available: false },
-    { code: 'pt', name: 'Português', intl: 'pt-BR', available: false },
+    { code: 'en', name: 'English', intl: 'en', available: true },
+    { code: 'pt', name: 'Português', intl: 'pt-BR', available: true },
 ] as const satisfies readonly LocaleDefinition[];
 
 export type LocaleCode = (typeof LOCALES)[number]['code'];

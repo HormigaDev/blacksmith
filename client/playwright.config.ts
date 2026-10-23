@@ -92,6 +92,7 @@ export default defineConfig({
             use: {
                 ...devices['Desktop Chrome'],
                 baseURL: DEV_URL,
+                locale: 'en-US',
                 // Alto de sobra: una historia más alta que la ventana saldría recortada en su captura.
                 viewport: { width: 1280, height: 1600 },
                 deviceScaleFactor: 1,
