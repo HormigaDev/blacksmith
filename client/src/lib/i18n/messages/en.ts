@@ -11,6 +11,10 @@ export default {
         required: 'Mandatory',
         retry: 'Retry',
     },
+    updates: {
+        available: 'New version available: {version}',
+        description: 'You can download it from {url}. The update is manual.',
+    },
     theme: {
         label: 'Theme',
         names: {

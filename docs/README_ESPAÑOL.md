@@ -86,12 +86,12 @@ automático o imágenes de contenedor aisladas, Blacksmith no es la herramienta 
 
 El repositorio es un workspace de Cargo con cuatro partes principales:
 
-| Componente | Función |
-| --- | --- |
-| `agent/` | Servicio Axum y Tokio instalado en el VPS |
-| `client/` | Interfaz de usuario SvelteKit |
-| `client/src-tauri/` | Runtime de escritorio Tauri 2 y transporte SSH |
-| `shared/` | Tipos de API serializables compartidos por agente y cliente |
+| Componente          | Función                                                     |
+| ------------------- | ----------------------------------------------------------- |
+| `agent/`            | Servicio Axum y Tokio instalado en el VPS                   |
+| `client/`           | Interfaz de usuario SvelteKit                               |
+| `client/src-tauri/` | Runtime de escritorio Tauri 2 y transporte SSH              |
+| `shared/`           | Tipos de API serializables compartidos por agente y cliente |
 
 El agente escucha por defecto en `127.0.0.1:4040`. La aplicación de escritorio abre un
 reenvío local SSH hacia esa dirección y envía las peticiones a través del túnel. OpenSSH

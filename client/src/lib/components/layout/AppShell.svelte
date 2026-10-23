@@ -18,7 +18,7 @@
     import LayoutGridIcon from '@lucide/svelte/icons/layout-grid';
     import MenuIcon from '@lucide/svelte/icons/menu';
     import XIcon from '@lucide/svelte/icons/x';
-    import { tick, type Snippet } from 'svelte';
+    import { onMount, tick, type Snippet } from 'svelte';
 
     import { asset } from '$app/paths';
     import { page } from '$app/state';
@@ -27,6 +27,7 @@
     import ThemeSwitcher from '$lib/components/theme/ThemeSwitcher.svelte';
     import { t } from '$lib/i18n';
     import { servers } from '$lib/stores';
+    import { checkForUpdate } from '$lib/update/check';
 
     import GitHubMenu from '../github/GitHubMenu.svelte';
     import Button from '../ui/Button.svelte';
@@ -39,6 +40,10 @@
     let navOpen = $state(false);
     let sidebar = $state<HTMLElement>();
     let menuButton = $state<HTMLElement>();
+
+    onMount(() => {
+        void checkForUpdate();
+    });
 
     // Al navegar, el panel se cierra (solo importa en modo compacto).
     $effect(() => {

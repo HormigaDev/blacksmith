@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-github-latest-release"
+description = "Enables the github_latest_release command without any pre-configured scope."
+commands.allow = ["github_latest_release"]
+
+[[permission]]
+identifier = "deny-github-latest-release"
+description = "Denies the github_latest_release command without any pre-configured scope."
+commands.deny = ["github_latest_release"]

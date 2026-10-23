@@ -22,6 +22,7 @@ const MAX_REPOSITORIES: usize = 1000;
 const MAX_BRANCHES: usize = 500;
 /// Páginas de llaves de despliegue que se revisan (100 por página).
 const MAX_KEY_PAGES: usize = 10;
+const RELEASE_REPOSITORY: &str = "HormigaDev/blacksmith";
 
 /// Respuesta de `POST /login/device/code`.
 #[derive(Clone, Deserialize)]
@@ -81,6 +82,17 @@ pub struct GitHubRepository {
     pub private: bool,
     pub default_branch: String,
     pub html_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubRelease {
+    #[serde(rename = "tag_name")]
+    pub tag_name: String,
+    #[serde(rename = "html_url")]
+    pub html_url: String,
+    pub prerelease: bool,
+    pub draft: bool,
 }
 
 pub struct GitHubClient {
@@ -178,6 +190,29 @@ impl GitHubClient {
 
     pub async fn user(&self, token: &str) -> CommandResult<GitHubUser> {
         self.get(token, "/user").await
+    }
+
+    pub async fn latest_release(&self) -> CommandResult<GitHubRelease> {
+        let response = self
+            .http
+            .get(format!("{}/repos/{RELEASE_REPOSITORY}/releases/latest", self.api))
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", API_VERSION)
+            .send()
+            .await
+            .map_err(unreachable)?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(CommandError::GitHub {
+                status: status.as_u16(),
+            });
+        }
+        response
+            .json()
+            .await
+            .map_err(|_| CommandError::GitHub {
+                status: status.as_u16(),
+            })
     }
 
     /// Repositorios de todas las instalaciones de la App a las que el usuario tiene acceso

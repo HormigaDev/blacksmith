@@ -86,6 +86,7 @@ pub fn run() {
             agent_api::logs_follow,
             agent_api::logs_stop,
             github::github_status,
+            github::github_latest_release,
             github::github_configure,
             github::github_use_default_app,
             github::github_share_with_server,

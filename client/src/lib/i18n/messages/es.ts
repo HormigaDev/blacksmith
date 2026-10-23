@@ -16,6 +16,10 @@ export default {
         required: 'Obligatorio',
         retry: 'Reintentar',
     },
+    updates: {
+        available: 'Nueva versión disponible: {version}',
+        description: 'Puedes descargarla desde {url}. La actualización es manual.',
+    },
     theme: {
         label: 'Tema',
         names: {

@@ -29,6 +29,7 @@
     "allow-logs-follow",
     "allow-logs-stop",
     "allow-github-status",
+    "allow-github-latest-release",
     "allow-github-configure",
     "allow-github-use-default-app",
     "allow-github-share-with-server",

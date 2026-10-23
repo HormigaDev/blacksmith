@@ -1,0 +1,187 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+env:
+  CI: "true"
+  RELEASE_VERSION: ${{ github.ref_name }}
+
+jobs:
+  validate-version:
+    name: Validate release version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check tag against workspace version
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          workspace_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          test "$tag_version" = "$workspace_version" || {
+            echo "Tag $GITHUB_REF_NAME does not match workspace version $workspace_version"
+            exit 1
+          }
+
+  linux:
+    name: Linux x64
+    needs: validate-version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: client/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: client/.node-version
+          cache: pnpm
+          cache-dependency-path: client/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+      - name: Install frontend dependencies
+        working-directory: client
+        run: pnpm install --frozen-lockfile
+      - name: Build Debian package
+        working-directory: client
+        run: pnpm tauri build --target x86_64-unknown-linux-gnu --bundles deb
+      - name: Rename release artifact
+        run: |
+          mkdir -p release
+          package="$(find client/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          test -n "$package"
+          cp "$package" "release/linux-blacksmith-${RELEASE_VERSION}.deb"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-blacksmith
+          path: release/linux-blacksmith-${{ env.RELEASE_VERSION }}.deb
+          if-no-files-found: error
+
+  linux-arm:
+    name: Linux ARM64
+    needs: validate-version
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: client/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: client/.node-version
+          cache: pnpm
+          cache-dependency-path: client/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - name: Install Linux ARM64 dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+      - name: Install frontend dependencies
+        working-directory: client
+        run: pnpm install --frozen-lockfile
+      - name: Build Debian package
+        working-directory: client
+        run: pnpm tauri build --target aarch64-unknown-linux-gnu --bundles deb
+      - name: Rename release artifact
+        run: |
+          mkdir -p release
+          package="$(find client/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/deb -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          test -n "$package"
+          cp "$package" "release/linux-arm-blacksmith-${RELEASE_VERSION}.deb"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-arm-blacksmith
+          path: release/linux-arm-blacksmith-${{ env.RELEASE_VERSION }}.deb
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64
+    needs: validate-version
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: client/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: client/.node-version
+          cache: pnpm
+          cache-dependency-path: client/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Install frontend dependencies
+        working-directory: client
+        run: pnpm install --frozen-lockfile
+      - name: Build NSIS and MSI installers
+        working-directory: client
+        run: pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis,msi
+      - name: Rename release artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release | Out-Null
+          $nsis = Get-ChildItem -Path client/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter *.exe | Select-Object -First 1
+          $msi = Get-ChildItem -Path client/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi -Filter *.msi | Select-Object -First 1
+          if ($null -eq $nsis -or $null -eq $msi) { throw "Tauri did not produce both Windows installers" }
+          Copy-Item $nsis.FullName "release/windows-blacksmith-$env:RELEASE_VERSION.exe"
+          Copy-Item $msi.FullName "release/windows-blacksmith-$env:RELEASE_VERSION.msi"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-blacksmith
+          path: |
+            release/windows-blacksmith-${{ env.RELEASE_VERSION }}.exe
+            release/windows-blacksmith-${{ env.RELEASE_VERSION }}.msi
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: [linux, linux-arm, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download build artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" --dir release
+      - name: Validate artifact names
+        run: |
+          expected=(
+            "linux-blacksmith-${RELEASE_VERSION}.deb"
+            "linux-arm-blacksmith-${RELEASE_VERSION}.deb"
+            "windows-blacksmith-${RELEASE_VERSION}.exe"
+            "windows-blacksmith-${RELEASE_VERSION}.msi"
+          )
+          for artifact in "${expected[@]}"; do
+            test "$(find release -type f -name "$artifact" | wc -l)" -eq 1
+          done
+      - name: Create release and upload installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$RELEASE_VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --generate-notes \
+            release/linux-blacksmith-"$RELEASE_VERSION".deb \
+            release/linux-arm-blacksmith-"$RELEASE_VERSION".deb \
+            release/windows-blacksmith-"$RELEASE_VERSION".exe \
+            release/windows-blacksmith-"$RELEASE_VERSION".msi

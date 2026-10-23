@@ -12,8 +12,31 @@ pnpm workbench      # componentes aislados, en una ventana
 pnpm check          # tipos, estilos, i18n, tests y formato
 pnpm test:e2e       # E2E, accesibilidad (Playwright)
 pnpm format
-pnpm tauri build    # paquetes deb, rpm, AppImage, NSIS y MSI
+pnpm tauri build    # paquete local según la plataforma y los targets configurados
 ```
+
+## Paquetes de release
+
+La release oficial se genera desde un tag SemVer, por ejemplo `v1.0.0`. El paquete Debian
+conserva el nombre interno `blacksmith`, por lo que `dpkg` puede actualizar una instalación
+anterior cuando se instala una versión posterior:
+
+```sh
+cd client
+pnpm tauri build --target x86_64-unknown-linux-gnu --bundles deb
+sudo dpkg -i src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
+```
+
+Objetivos oficiales:
+
+| Plataforma  | Target Rust                 | Artefactos publicados                       |
+| ----------- | --------------------------- | ------------------------------------------- |
+| Linux x64   | `x86_64-unknown-linux-gnu`  | `linux-blacksmith-v<version>.deb`           |
+| Linux ARM64 | `aarch64-unknown-linux-gnu` | `linux-arm-blacksmith-v<version>.deb`       |
+| Windows x64 | `x86_64-pc-windows-msvc`    | `windows-blacksmith-v<version>.exe`, `.msi` |
+
+Los instaladores oficiales se generan automáticamente al publicar un tag `v*.*.*` y se suben
+a las releases de GitHub. No se generan objetivos x32.
 
 ## Documentación
 

@@ -20,7 +20,7 @@ use tauri::State;
 use tokio::sync::{Mutex, Notify};
 use zeroize::{Zeroize, Zeroizing};
 
-use self::client::{GitHubClient, GitHubRepository, GitHubUser, Poll};
+use self::client::{GitHubClient, GitHubRelease, GitHubRepository, GitHubUser, Poll};
 use crate::{
     agent_http::{self, Method},
     commands::{blocking, AppState},
@@ -144,6 +144,11 @@ pub struct LoginStart {
     user_code: String,
     verification_uri: String,
     expires_in: u64,
+}
+
+#[tauri::command]
+pub async fn github_latest_release() -> CommandResult<GitHubRelease> {
+    GitHubClient::new()?.latest_release().await
 }
 
 /// Token de la App configurada, o `GitHubNotConnected`.

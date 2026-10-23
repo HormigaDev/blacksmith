@@ -15,6 +15,7 @@ const COMMANDS: &[&str] = &[
     "logs_follow",
     "logs_stop",
     "github_status",
+    "github_latest_release",
     "github_configure",
     "github_use_default_app",
     "github_share_with_server",

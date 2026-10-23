@@ -95,12 +95,12 @@ container images, Blacksmith is the wrong tool.
 
 The repository is a Cargo workspace with three main parts:
 
-| Component | Role |
-| --- | --- |
-| `agent/` | Axum and Tokio service installed on the VPS |
-| `client/` | SvelteKit user interface |
-| `client/src-tauri/` | Tauri 2 desktop runtime and SSH transport |
-| `shared/` | Serializable API types shared by the agent and client |
+| Component           | Role                                                  |
+| ------------------- | ----------------------------------------------------- |
+| `agent/`            | Axum and Tokio service installed on the VPS           |
+| `client/`           | SvelteKit user interface                              |
+| `client/src-tauri/` | Tauri 2 desktop runtime and SSH transport             |
+| `shared/`           | Serializable API types shared by the agent and client |
 
 The agent listens on `127.0.0.1:4040` by default. The desktop application opens an SSH
 local-forward to that address and sends requests through the tunnel. OpenSSH authenticates
