@@ -18,7 +18,12 @@ export function serverHref(id: string): string {
     return `/servers/${encodeURIComponent(id)}`;
 }
 
+/** Ruta de la pestaña Servicios del servidor. */
+export function serverServicesHref(id: string): string {
+    return `${serverHref(id)}/services`;
+}
+
 /** Ruta de la página de un servicio del servidor. */
 export function serviceHref(serverId: string, service: string): string {
-    return `${serverHref(serverId)}/services/${encodeURIComponent(service)}`;
+    return `${serverServicesHref(serverId)}/${encodeURIComponent(service)}`;
 }

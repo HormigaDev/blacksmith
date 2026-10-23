@@ -59,7 +59,7 @@
 </script>
 
 <div class="overview">
-    <dl class="facts">
+    <dl class="facts" data-selectable>
         <div class="fact">
             <dt>{t('host.os')}</dt>
             <dd>{host.os.name ?? host.os.id}</dd>

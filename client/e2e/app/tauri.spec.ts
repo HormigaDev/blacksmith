@@ -94,6 +94,10 @@ test.describe('Integración con Tauri (runtime simulado)', () => {
         await waitForApp(page);
         await page.getByRole('button', { name: 'Conectar' }).click();
         await page.getByRole('main').getByRole('link', { name: 'localhost:4040' }).click();
+        await page
+            .getByRole('navigation', { name: 'Secciones del servidor' })
+            .getByRole('link', { name: 'Servicios' })
+            .click();
         await page.getByRole('link', { name: 'API' }).first().click();
         await page.getByRole('link', { name: 'Despliegue' }).click();
         await expect(page.getByRole('button', { name: 'Desplegar' })).toBeAttached();

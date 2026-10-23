@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import process from 'node:process';
 
 import { sveltekit } from '@sveltejs/kit/vite';
@@ -6,9 +7,25 @@ import { defineConfig } from 'vitest/config';
 
 const host = process.env.TAURI_DEV_HOST;
 
+/**
+ * Versión de la app: la del workspace de Cargo (`[workspace.package]`), única fuente de verdad.
+ * Tauri la toma de ahí también (tauri.conf.json no fija otra) y el agente la comparte.
+ */
+function workspaceVersion(): string {
+    const manifest = readFileSync(new URL('../Cargo.toml', import.meta.url), 'utf8');
+    const section = manifest.split('[workspace.package]')[1] ?? '';
+    const version = /^version\s*=\s*"([^"]+)"/m.exec(section)?.[1];
+    if (!version) throw new Error('No se encontró la versión en [workspace.package] de Cargo.toml');
+    return version;
+}
+
 // https://vite.dev/config/
 export default defineConfig({
     plugins: [sveltekit()],
+
+    define: {
+        __APP_VERSION__: JSON.stringify(workspaceVersion()),
+    },
 
     // Se preoptimizan al arrancar: si Vite las descubre a mitad de una sesión, recarga la página
     // (en el Workbench) o rompe los imports en curso (primera ejecución de los tests de componente).

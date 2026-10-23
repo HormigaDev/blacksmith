@@ -1,4 +1,4 @@
-/* Reset mínimo y estilos de documento. Solo selectores de elemento: nada de clases aquí. */
+/* Reset mínimo y estilos de documento. Solo selectores de elemento y de atributo: nada de clases aquí. */
 
 *,
 *::before,
@@ -38,6 +38,49 @@ body {
     overflow: clip;
     /* Aplicación de escritorio: sin el rebote de scroll de una web. */
     overscroll-behavior: none;
+}
+
+/*
+ * Aplicación de escritorio: el texto de la interfaz (títulos, etiquetas, botones) no se
+ * selecciona ni se arrastra, como en una app nativa; mantener el clic y mover el ratón no
+ * subraya la ventana entera. Solo se puede copiar (y arrastrar lo seleccionado) en:
+ *   - los campos editables;
+ *   - los valores técnicos en `code`, `pre`, `kbd` y `samp` (rutas, IPs, unidades, comandos…);
+ *   - los mensajes de error (`role="alert"`), para buscarlos o reportarlos;
+ *   - lo que se marque con `data-selectable` (p. ej. los logs). Ver styles.md, «Texto».
+ * Imágenes y enlaces tampoco se arrastran. Las listas reordenables usan eventos de puntero.
+ */
+html {
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+}
+
+* {
+    -webkit-user-drag: none;
+}
+
+input,
+textarea,
+[contenteditable]:not([contenteditable='false']),
+code,
+kbd,
+pre,
+samp,
+[role='alert'],
+[data-selectable] {
+    -webkit-user-select: text;
+    user-select: text;
+    -webkit-user-drag: auto;
+    cursor: text;
+}
+
+/* Dentro de un enlace o un botón, el valor es parte del control: ni se selecciona ni cambia el cursor. */
+:is(a, button, label, [role='button'], [role='option'], [role='tab']) :is(code, kbd, pre, samp, [data-selectable]) {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-user-drag: none;
+    cursor: inherit;
 }
 
 h1,

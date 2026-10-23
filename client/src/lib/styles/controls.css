@@ -166,7 +166,6 @@
     font-size: var(--font-size-sm);
     border-radius: var(--radius-sm);
     cursor: pointer;
-    user-select: none;
     outline: none;
 }
 
@@ -238,6 +237,69 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* --- Select con búsqueda (FilterSelect) --- */
+
+/* La búsqueda queda fija arriba y solo se desplaza la lista. */
+.bs-filter-popover {
+    display: flex;
+    flex-direction: column;
+    min-width: max(var(--popover-min-width), var(--bits-popover-anchor-width, 0px));
+    max-height: min(var(--popover-max-height), var(--bits-popover-content-available-height, 100vh));
+    padding: var(--space-0);
+    overflow: hidden;
+}
+
+.bs-filter-search {
+    display: flex;
+    flex-shrink: 0;
+    gap: var(--space-2);
+    align-items: center;
+    padding: var(--space-2) var(--space-3);
+    color: var(--color-text-subtle);
+    border-bottom: var(--border-width) solid var(--color-border);
+}
+
+.bs-filter-input {
+    flex: 1;
+    min-width: 0;
+    padding: var(--space-0);
+    font: inherit;
+    font-size: var(--font-size-sm);
+    color: var(--color-text);
+    background: transparent;
+    border: none;
+    outline: none;
+}
+
+.bs-filter-input::placeholder {
+    color: var(--color-text-subtle);
+}
+
+.bs-filter-list {
+    min-height: 0;
+    padding: var(--space-1);
+    overflow-y: auto;
+}
+
+/* En Command, `data-selected` es la opción resaltada; la elegida lleva `data-chosen`. */
+.bs-filter-option[data-selected] {
+    color: inherit;
+    font-weight: inherit;
+    background-color: var(--color-surface-hover);
+}
+
+.bs-filter-option[data-chosen] {
+    color: var(--color-accent);
+    font-weight: var(--font-weight-medium);
+}
+
+.bs-filter-empty {
+    padding: var(--space-3) var(--space-2);
+    font-size: var(--font-size-sm);
+    color: var(--color-text-muted);
+    text-align: center;
 }
 
 /* --- Campos segmentados de fecha y hora --- */

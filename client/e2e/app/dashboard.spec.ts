@@ -9,6 +9,34 @@ test.describe('Ventana principal', () => {
         await expect(page.getByRole('heading', { level: 1 })).toHaveText('Sin servidores todavía');
     });
 
+    test('como una app nativa: arrastrar con el ratón no selecciona la interfaz', async ({ page }) => {
+        await page.goto('/');
+        await waitForApp(page);
+        const heading = page.getByRole('heading', { level: 1 });
+        const box = (await heading.boundingBox())!;
+        await page.mouse.move(box.x - 40, box.y - 40);
+        await page.mouse.down();
+        await page.mouse.move(box.x + box.width + 200, box.y + 300, { steps: 8 });
+        await page.mouse.up();
+        expect(await page.evaluate(() => window.getSelection()?.toString() ?? '')).toBe('');
+        // Ni con doble clic sobre un título.
+        await heading.dblclick();
+        expect(await page.evaluate(() => window.getSelection()?.toString() ?? '')).toBe('');
+        // Imágenes y enlaces no se arrastran.
+        const logo = page.getByRole('complementary').locator('img').first();
+        expect(await logo.evaluate((element) => getComputedStyle(element).getPropertyValue('-webkit-user-drag'))).toBe(
+            'none',
+        );
+    });
+
+    test('la versión de la app, abajo en la barra lateral', async ({ page }) => {
+        await page.goto('/');
+        await waitForApp(page);
+        const version = page.getByRole('complementary').getByText(/^v\d+\.\d+\.\d+/);
+        await expect(version).toBeVisible();
+        await expect(version).toHaveAttribute('title', 'Versión de Blacksmith');
+    });
+
     test('sigue el tema del sistema desde el primer pintado', async ({ page }) => {
         await page.emulateMedia({ colorScheme: 'dark' });
         await page.goto('/');

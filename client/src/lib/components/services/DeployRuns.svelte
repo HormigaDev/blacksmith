@@ -128,7 +128,7 @@
             {#if latest.status === 'failed'}
                 <p class="failure">
                     <CircleAlertIcon />
-                    <span>{latest.detail ?? t('services.deploys.failedHint')}</span>
+                    <span data-selectable>{latest.detail ?? t('services.deploys.failedHint')}</span>
                 </p>
             {/if}
             {#if output && outputOpen}

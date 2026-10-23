@@ -104,7 +104,8 @@
                             {#if copied}<CheckIcon />{:else}<CopyIcon />{/if}
                             {copied ? t('services.deployKey.copied') : t('services.deployKey.copy')}
                         </Button>
-                        <span class="note">{t('services.deployKey.fingerprint', { fingerprint: key.fingerprint })}</span
+                        <span class="note" data-selectable
+                            >{t('services.deployKey.fingerprint', { fingerprint: key.fingerprint })}</span
                         >
                     </div>
                 </div>

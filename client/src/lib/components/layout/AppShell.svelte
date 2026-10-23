@@ -22,7 +22,7 @@
 
     import { asset } from '$app/paths';
     import { page } from '$app/state';
-    import { APP_SHORT_NAME } from '$lib/app';
+    import { APP_NAME, APP_SHORT_NAME, APP_VERSION } from '$lib/app';
     import LocaleSwitcher from '$lib/components/locale/LocaleSwitcher.svelte';
     import ThemeSwitcher from '$lib/components/theme/ThemeSwitcher.svelte';
     import { t } from '$lib/i18n';
@@ -88,6 +88,9 @@
                 <LocaleSwitcher />
                 <ThemeSwitcher />
             </div>
+            <p class="version" title={t('layout.versionLabel', { app: APP_NAME })}>
+                {t('layout.version', { version: APP_VERSION })}
+            </p>
         </div>
     </aside>
     <!-- Solo visual: el cierre al pulsar fuera lo gestiona `onpointerdown`. -->
@@ -151,7 +154,6 @@
         font-weight: var(--font-weight-semibold);
         letter-spacing: var(--letter-spacing-tight);
         color: var(--color-text);
-        user-select: none;
     }
 
     /* Tamaño de ícono: cabe en la altura de la barra de título sin agrandarla. */
@@ -216,6 +218,13 @@
         gap: var(--space-2);
     }
 
+    .version {
+        font-family: var(--font-mono);
+        font-size: var(--font-size-xs);
+        color: var(--color-text-muted);
+        text-align: center;
+    }
+
     .main {
         display: grid;
         grid-template-rows: var(--layout-header-height) minmax(0, 1fr);
@@ -229,7 +238,6 @@
         align-items: center;
         justify-content: flex-end;
         min-width: 0;
-        user-select: none;
     }
 
     .compact-brand {

@@ -101,6 +101,7 @@
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <div
         class="lines"
+        data-selectable
         role="log"
         aria-live="off"
         aria-label={t('services.logs.label', { name })}

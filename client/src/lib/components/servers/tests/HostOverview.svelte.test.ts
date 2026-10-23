@@ -65,6 +65,15 @@ describe('HostOverview', () => {
         await expect.element(page.getByText('eth0')).toBeVisible();
     });
 
+    test('los datos y las direcciones se pueden copiar; los títulos, no', async () => {
+        await render(HostOverview, { host: HOST });
+        const userSelect = (element: Element) => getComputedStyle(element).userSelect;
+        const os = page.getByText('Debian GNU/Linux 12 (bookworm)').element();
+        expect(userSelect(os.closest('[data-selectable]')!)).toBe('text');
+        expect(userSelect(page.getByText('203.0.113.7/24').element())).toBe('text');
+        expect(userSelect(page.getByRole('heading', { name: 'Discos' }).element())).not.toBe('text');
+    });
+
     test('lo desconocido no se inventa', async () => {
         await render(HostOverview, {
             host: {

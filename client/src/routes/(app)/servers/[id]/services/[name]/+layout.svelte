@@ -14,7 +14,7 @@
     import { TabNav } from '$lib/components/ui';
     import { describeError } from '$lib/http';
     import { t } from '$lib/i18n';
-    import { serverAddress, serverHref, serviceHref } from '$lib/servers/address';
+    import { serverAddress, serverServicesHref, serviceHref } from '$lib/servers/address';
     import { servers, serviceStore } from '$lib/stores';
     import { toast } from '$lib/toast';
 
@@ -72,7 +72,7 @@
     <div class="page">
         <header class="header">
             <nav class="breadcrumb" aria-label={t('services.breadcrumb')}>
-                <a href={serverHref(serverId)}>{serverAddress(entry.profile)}</a>
+                <a href={serverServicesHref(serverId)}>{serverAddress(entry.profile)}</a>
                 <ChevronRightIcon />
                 <span aria-current="page">{name}</span>
             </nav>

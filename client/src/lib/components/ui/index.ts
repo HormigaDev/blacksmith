@@ -8,6 +8,7 @@ export { default as Dialog } from './Dialog.svelte';
 export { default as FaIcon } from './FaIcon.svelte';
 export { default as Field } from './Field.svelte';
 export { default as FilePicker } from './FilePicker.svelte';
+export { default as FilterSelect } from './FilterSelect.svelte';
 export { default as Input } from './Input.svelte';
 export { default as Meter } from './Meter.svelte';
 export { default as Panel } from './Panel.svelte';

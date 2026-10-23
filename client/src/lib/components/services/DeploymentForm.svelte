@@ -35,7 +35,7 @@
     import Button from '../ui/Button.svelte';
     import FaIcon from '../ui/FaIcon.svelte';
     import Input from '../ui/Input.svelte';
-    import Select from '../ui/Select.svelte';
+    import FilterSelect from '../ui/FilterSelect.svelte';
     import Spinner from '../ui/Spinner.svelte';
     import ToggleGroup from '../ui/ToggleGroup.svelte';
 
@@ -197,7 +197,7 @@
                         <span class="label">{t('services.deployment.repository')}</span>
                         <span class="field-box">
                             <FaIcon icon={faGithub} />
-                            <span class="field-value">{locked.owner}/{locked.name}</span>
+                            <span class="field-value" data-selectable>{locked.owner}/{locked.name}</span>
                             <span
                                 class="lock"
                                 role="img"
@@ -221,10 +221,11 @@
                         <Spinner label={t('services.deployment.repositoriesLoading')} />
                     </div>
                 {:else}
-                    <Select
+                    <FilterSelect
                         label={t('services.deployment.repository')}
                         hint={t('services.deployment.repositoryHint')}
                         placeholder={t('services.deployment.repositoryPlaceholder')}
+                        searchPlaceholder={t('services.deployment.repositorySearch')}
                         options={repositoryOptions}
                         value={repository}
                         onValueChange={selectRepository}
@@ -234,15 +235,16 @@
             {#if repository !== NONE}
                 <div class="branch">
                     {#if githubConnected}
-                        <Select
+                        <FilterSelect
                             label={t('services.deployment.branch')}
                             placeholder={branchesLoading ? t('services.deployment.branchLoading') : undefined}
+                            searchPlaceholder={t('services.deployment.branchSearch')}
                             options={branchOptions}
                             disabled={branchesLoading}
                             bind:value={branch}
                         >
                             {#snippet leading()}<GitBranchIcon />{/snippet}
-                        </Select>
+                        </FilterSelect>
                     {:else}
                         <Input label={t('services.deployment.branch')} spellcheck="false" bind:value={branch}>
                             {#snippet leading()}<GitBranchIcon />{/snippet}

@@ -158,19 +158,30 @@ test.describe('Servicios del servidor', () => {
             /localhost:4040/,
         );
         await page.getByRole('main').getByRole('link', { name: 'localhost:4040' }).click();
-        await expect(page.getByRole('link', { name: 'API de pagos' })).toBeVisible();
-        // Datos del servidor, debajo de sus servicios.
+        // Pestaña Detalles (por defecto): los datos del servidor.
+        const serverTabs = page.getByRole('navigation', { name: 'Secciones del servidor' });
+        await expect(serverTabs.getByRole('link', { name: 'Detalles' })).toHaveAttribute('aria-current', 'page');
         const host = page.getByRole('region', { name: 'Servidor', exact: true });
         await expect(host.getByText('Ubuntu 24.04.1 LTS')).toBeVisible();
         await expect(host.getByText('Virtual · KVM')).toBeVisible();
         await expect(host.getByRole('meter', { name: 'Espacio usado en /' })).toBeVisible();
         await page.screenshot({ path: test.info().outputPath('servidor-datos.png'), fullPage: true });
+
+        // Pestaña Servicios.
+        await serverTabs.getByRole('link', { name: 'Servicios' }).click();
+        await expect(page).toHaveURL(/\/servers\/local%3A4040\/services$/);
+        await expect(page.getByRole('link', { name: 'API de pagos' })).toBeVisible();
         await page.getByRole('button', { name: 'Registrar servicio' }).click();
         await expect(page.getByRole('dialog', { name: 'Registrar servicio' })).toBeVisible();
         await page.keyboard.press('Escape');
 
         await page.getByRole('link', { name: 'API de pagos' }).click();
         await expect(page.getByRole('heading', { level: 1 })).toHaveText('API de pagos');
+        // La ruta de navegación vuelve a la pestaña Servicios.
+        await expect(page.getByRole('navigation', { name: 'Ruta' }).getByRole('link')).toHaveAttribute(
+            'href',
+            '/servers/local%3A4040/services',
+        );
         // Sin desplegar: controles deshabilitados.
         const controls = page.getByRole('region', { name: 'Control del servicio' });
         await expect(controls.getByText('Sin desplegar')).toBeVisible();

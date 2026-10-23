@@ -145,6 +145,22 @@ de la pantalla es un fallo grave, aunque «funcione».
 - Lo verifica el E2E «el marco queda fijo» (`e2e/app/tauri.spec.ts`), que también corre en
   WebKit. Cualquier página nueva alta debe probarse con la ventana baja (p. ej. 1024×480).
 
+### Texto: ni se selecciona ni se arrastra (salvo lo que se copia)
+
+Como en una app nativa, mantener el clic y mover el ratón **no selecciona la ventana** y nada se
+arrastra (texto, imágenes, enlaces). Lo hace `base.css` para todo el documento; no se repite en
+los componentes. Solo se puede seleccionar (y arrastrar lo seleccionado):
+
+- los campos editables (`input`, `textarea`, `contenteditable`);
+- los valores técnicos en `code`, `pre`, `kbd` y `samp`: rutas, IPs, unidades, comandos,
+  dominios, salidas. **Un valor que el usuario querrá copiar va en `<code>`**;
+- los mensajes de error (`role="alert"`), para buscarlos o reportarlos;
+- lo marcado con el atributo `data-selectable`, para texto copiable que no es un valor técnico
+  (los logs, el motivo de un despliegue fallido, los datos del servidor).
+
+Dentro de un enlace o un botón nada se selecciona: el valor es parte del control. Las listas
+reordenables no usan el drag & drop de HTML5 (ver components.md), así que esto no les afecta.
+
 ### Tamaños de ventana
 
 La interfaz funciona a **cualquier tamaño**, de un móvil (futura PWA) a una pantalla grande.

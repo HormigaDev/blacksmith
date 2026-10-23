@@ -47,6 +47,12 @@ export default {
         select: {
             placeholder: 'Selecciona una opción',
         },
+        filterSelect: {
+            search: 'Buscar…',
+            searchLabel: 'Buscar en {label}',
+            empty: 'Sin resultados',
+            chosen: '(elegido)',
+        },
         datePicker: {
             open: 'Abrir calendario',
             previousMonth: 'Mes anterior',
@@ -169,6 +175,8 @@ export default {
             open: 'Mostrar navegación',
             close: 'Ocultar navegación',
         },
+        version: 'v{version}',
+        versionLabel: 'Versión de {app}',
     },
     window: {
         controls: 'Controles de la ventana',
@@ -501,6 +509,8 @@ export default {
             repositoriesLoading: 'Cargando repositorios…',
             repositoryNone: 'Sin repositorio',
             repositoryPlaceholder: 'Elige un repositorio',
+            repositorySearch: 'Buscar repositorio…',
+            branchSearch: 'Buscar rama…',
             repositoryHint: '¿No aparece? Da acceso a la App a ese repositorio desde GitHub.',
             branch: 'Rama',
             branchLoading: 'Cargando ramas…',
@@ -621,6 +631,11 @@ export default {
     servers: {
         title: 'Servidores',
         detail: {
+            tabs: {
+                label: 'Secciones del servidor',
+                details: 'Detalles',
+                services: 'Servicios',
+            },
             notFound: {
                 title: 'Servidor no encontrado',
                 description: 'Puede que se haya quitado de la lista.',
