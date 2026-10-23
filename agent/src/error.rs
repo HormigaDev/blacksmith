@@ -13,13 +13,19 @@ use std::{borrow::Cow, error::Error as StdError, fmt};
 
 use axum::{
     Json,
-    extract::rejection::{JsonRejection, PathRejection},
+    extract::{
+        rejection::{JsonRejection, PathRejection},
+        ws::rejection::WebSocketUpgradeRejection,
+    },
     http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use shared::{ApiErrorBody, ErrorCode};
 
-use crate::{services::ServiceError, systemd::SystemctlError};
+use crate::{
+    services::ServiceError,
+    systemd::{JournalError, SystemctlError},
+};
 
 pub type BoxError = Box<dyn StdError + Send + Sync + 'static>;
 pub type AppResult<T> = Result<T, AppError>;
@@ -37,6 +43,15 @@ pub enum AppError {
 
     #[error(transparent)]
     Service(#[from] ServiceError),
+
+    #[error("se requiere un handshake WebSocket")]
+    WebSocketRequired(#[from] WebSocketUpgradeRejection),
+
+    #[error("máximo de flujos de logs simultáneos alcanzado ({0})")]
+    LogStreamLimit(usize),
+
+    #[error("no se pudo leer el journal")]
+    Journal(#[from] JournalError),
 
     #[error("no autenticado")]
     Unauthorized,
@@ -85,6 +100,9 @@ impl AppError {
             Self::InvalidJson(rejection) => rejection.status(),
             Self::InvalidPath(_) => StatusCode::BAD_REQUEST,
             Self::Service(error) => service_error(error).0,
+            Self::WebSocketRequired(_) => StatusCode::UPGRADE_REQUIRED,
+            Self::LogStreamLimit(_) => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Journal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Forbidden => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
@@ -112,6 +130,21 @@ impl AppError {
                 let (_, code, message) = service_error(&error);
                 (code, message.into())
             }
+            Self::WebSocketRequired(rejection) => (
+                ErrorCode::WebSocketRequired,
+                format!(
+                    "se requiere un handshake WebSocket: {}",
+                    rejection.body_text()
+                )
+                .into(),
+            ),
+            error @ Self::LogStreamLimit(_) => {
+                (ErrorCode::LogStreamLimit, error.to_string().into())
+            }
+            Self::Journal(error) => (
+                ErrorCode::SystemdFailed,
+                DisplayChain(&error).to_string().into(),
+            ),
             Self::Unauthorized => (ErrorCode::Unauthorized, "autenticación requerida".into()),
             Self::Forbidden => (ErrorCode::Forbidden, "acceso denegado".into()),
             Self::NotFound => (ErrorCode::NotFound, "recurso no encontrado".into()),

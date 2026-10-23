@@ -142,6 +142,14 @@ describe('ServerList', () => {
         expect(ghost()).toBeNull();
     });
 
+    test('cada servidor enlaza a su página, con el id codificado', async () => {
+        const list = setup();
+        await list.render();
+        await expect
+            .element(page.getByRole('link', { name: 'deploy@uno.example.com' }))
+            .toHaveAttribute('href', '/servers/deploy%40uno.example.com%3A22');
+    });
+
     test('cuadrícula: los servidores se muestran como tarjetas', async () => {
         const list = setup('grid');
         await list.render();

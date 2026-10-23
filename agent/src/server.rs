@@ -45,6 +45,7 @@ pub async fn run(config: Arc<Config>, db: Database) -> Result<(), ServerError> {
     let (draining, drain_signal) = watch::channel(false);
     let state = AppState::new(Arc::clone(&config), db);
     let services = state.services.clone();
+    let shutdown = state.shutdown.clone();
     let app = http::router(state);
     let server = axum::serve(listener, app)
         .with_graceful_shutdown(wait_for_drain(drain_signal))
@@ -71,6 +72,8 @@ pub async fn run(config: Arc<Config>, db: Database) -> Result<(), ServerError> {
 
     tracing::info!(signal = signal_name, grace = ?config.shutdown_timeout, "deteniendo; drenando conexiones");
     notify_systemd(NotifyState::Stopping);
+    // Las sesiones WebSocket no forman parte del drenado HTTP: se les avisa para que cierren.
+    shutdown.trigger();
     // Solo falla si el servidor ya soltó el receptor, es decir, si ya terminó.
     let _ = draining.send(true);
 

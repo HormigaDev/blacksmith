@@ -1,16 +1,24 @@
-<!-- Un servidor configurado: estado de su conexión y acciones (conectar, reintentar, quitar…). -->
+<!--
+    Un servidor configurado: estado de su conexión y acciones (conectar, reintentar, quitar…).
+
+    Con `href`, toda la tarjeta lleva a la página del servidor: el título es el enlace y su
+    `::after` cubre la tarjeta (enlace estirado). Los botones y el asa quedan por encima, así que
+    no hay controles anidados dentro de un enlace.
+-->
 <script lang="ts">
     import ServerIcon from '@lucide/svelte/icons/server';
     import Trash2Icon from '@lucide/svelte/icons/trash-2';
     import type { Snippet } from 'svelte';
 
     import { t } from '$lib/i18n';
+    import { serverAddress } from '$lib/servers/address';
     import type { ServerEntry } from '$lib/servers/servers.svelte';
 
     import Badge from '../ui/Badge.svelte';
     import Button from '../ui/Button.svelte';
     import ConfirmDialog from '../ui/ConfirmDialog.svelte';
     import Tooltip from '../ui/Tooltip.svelte';
+    import ServerStatusBadge from './ServerStatusBadge.svelte';
 
     interface Props {
         entry: ServerEntry;
@@ -22,31 +30,20 @@
         layout?: 'row' | 'tile';
         /** Asa para reordenar (la pone `ServerList`). */
         handle?: Snippet;
+        /** Página del servidor: hace la tarjeta entera clicable. */
+        href?: string;
     }
 
-    let { entry, onConnect, onDisconnect, onRemove, onForgetHostKey, layout = 'row', handle }: Props = $props();
+    let { entry, onConnect, onDisconnect, onRemove, onForgetHostKey, layout = 'row', handle, href }: Props = $props();
 
     let removeOpen = $state(false);
     let forgetOpen = $state(false);
 
     const profile = $derived(entry.profile);
     const isLocal = $derived(profile.kind === 'local');
-    const address = $derived(
-        isLocal
-            ? `localhost:${profile.port}`
-            : `${profile.username}@${profile.host}${profile.port === 22 ? '' : `:${profile.port}`}`,
-    );
+    const address = $derived(serverAddress(profile));
     const busy = $derived(entry.status === 'connecting');
     const retry = $derived(entry.status === 'agentMissing' || entry.status === 'error');
-
-    const badge = $derived({
-        disconnected: { variant: 'neutral', label: t('servers.status.disconnected') },
-        connecting: { variant: 'info', label: t('servers.status.connecting') },
-        connected: { variant: 'success', label: t('servers.status.connected') },
-        agentMissing: { variant: 'warning', label: t('servers.status.agentMissing') },
-        error: { variant: 'danger', label: t('servers.status.error') },
-    } as const satisfies Record<ServerEntry['status'], { variant: string; label: string }>);
-    const status = $derived(badge[entry.status]);
 
     const detail = $derived.by(() => {
         if (entry.status === 'connected' && entry.tunnel) {
@@ -65,14 +62,16 @@
     });
 </script>
 
-<article class="card {layout}" data-status={entry.status} aria-busy={busy || undefined}>
+<article class="card {layout}" class:linked={href} data-status={entry.status} aria-busy={busy || undefined}>
     {#if handle}<div class="handle">{@render handle()}</div>{/if}
     <span class="icon"><ServerIcon /></span>
 
     <div class="body">
         <div class="heading">
-            <h3 class="address">{address}</h3>
-            <Badge variant={status.variant} dot>{status.label}</Badge>
+            <h3 class="address">
+                {#if href}<a class="link" {href}>{address}</a>{:else}{address}{/if}
+            </h3>
+            <ServerStatusBadge status={entry.status} />
             {#if isLocal}<Badge variant="accent">{t('servers.card.local')}</Badge>{/if}
             {#if entry.status === 'connected' && entry.tunnel?.agent}
                 <span class="version">{t('servers.card.agentVersion', { version: entry.tunnel.agent.version })}</span>
@@ -138,6 +137,7 @@
 
 <style>
     .card {
+        position: relative;
         display: flex;
         align-items: center;
         gap: var(--space-4);
@@ -147,9 +147,45 @@
         border-radius: var(--radius-lg);
     }
 
+    /* Enlace estirado: el área del enlace es la tarjeta entera. */
+    .link {
+        color: inherit;
+        text-decoration: none;
+    }
+
+    .link::after {
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        content: '';
+    }
+
+    .linked {
+        transition: border-color var(--duration-fast) var(--easing-standard);
+    }
+
+    .linked:hover {
+        border-color: var(--color-border-strong);
+    }
+
+    .linked:has(.link:focus-visible) {
+        outline: var(--focus-ring-width) solid var(--color-focus-ring);
+        outline-offset: var(--focus-ring-width);
+    }
+
+    .link:focus-visible {
+        outline: none;
+    }
+
+    /* Los controles quedan por encima del enlace. */
+    .handle,
+    .actions {
+        position: relative;
+        z-index: var(--z-raised);
+    }
+
     /* Cuadrícula: apilado vertical, acciones al pie. */
     .tile {
-        position: relative;
         flex-direction: column;
         align-items: stretch;
         height: 100%;

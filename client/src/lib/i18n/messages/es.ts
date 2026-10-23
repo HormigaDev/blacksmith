@@ -90,6 +90,9 @@ export default {
                 'El agente no tiene permiso para gestionar servicios. Revisa la regla de polkit del servidor.',
             SYSTEMD_TIMEOUT: 'systemd no respondió a tiempo. La acción puede seguir en curso.',
             SYSTEMD_FAILED: 'Falló la comunicación con systemd.',
+            LOG_STREAM_LIMIT:
+                'Hay demasiados visores de logs abiertos en este servidor. Cierra alguno e inténtalo de nuevo.',
+            WEB_SOCKET_REQUIRED: 'Esta operación requiere una conexión en tiempo real.',
             UNKNOWN: 'El agente devolvió un error desconocido.',
         },
         tunnel: {
@@ -129,6 +132,19 @@ export default {
     },
     servers: {
         title: 'Servidores',
+        detail: {
+            back: 'Servidores',
+            notFound: {
+                title: 'Servidor no encontrado',
+                description: 'Puede que se haya quitado de la lista.',
+            },
+            services: {
+                title: 'Servicios',
+                emptyTitle: 'Aún no hay servicios',
+                emptyDescription: 'Los servicios que gestione el agente en este servidor aparecerán aquí.',
+                notConnected: 'Conéctate al servidor para ver y gestionar sus servicios.',
+            },
+        },
         view: {
             label: 'Vista',
             list: 'Lista',

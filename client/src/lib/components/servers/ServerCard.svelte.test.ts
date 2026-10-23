@@ -111,4 +111,28 @@ describe('ServerCard', () => {
         await page.getByRole('button', { name: 'Conectar' }).click();
         expect(card.onConnect).toHaveBeenCalledOnce();
     });
+
+    test('con href, la tarjeta entera lleva a la página del servidor y los botones siguen siendo botones', async () => {
+        const card = setup();
+        await render(ServerCard, {
+            entry: { profile: PROFILE, status: 'disconnected' },
+            onConnect: card.onConnect,
+            onDisconnect: card.onDisconnect,
+            onRemove: card.onRemove,
+            onForgetHostKey: card.onForgetHostKey,
+            href: '/servers/deploy%40vps.example.com%3A22',
+        });
+        const link = page.getByRole('link', { name: 'deploy@vps.example.com' });
+        await expect.element(link).toHaveAttribute('href', '/servers/deploy%40vps.example.com%3A22');
+        // El área del enlace cubre la tarjeta, pero los botones quedan por encima.
+        await page.getByRole('button', { name: 'Conectar' }).click();
+        expect(card.onConnect).toHaveBeenCalledOnce();
+        expect(location.pathname).not.toContain('/servers/');
+    });
+
+    test('sin href no hay enlace', async () => {
+        const card = setup();
+        await card.render();
+        await expect.element(page.getByRole('link')).not.toBeInTheDocument();
+    });
 });

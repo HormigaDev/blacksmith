@@ -51,7 +51,7 @@ async fn act(
 }
 
 /// El nombre no se repite en el mensaje: viene del cliente y puede ser arbitrariamente largo.
-fn slug(name: &str) -> AppResult<ServiceSlug> {
+pub(crate) fn slug(name: &str) -> AppResult<ServiceSlug> {
     ServiceSlug::new(name).map_err(|error| {
         AppError::BadRequest(format!("nombre de servicio inválido: {error}").into())
     })

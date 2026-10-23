@@ -18,13 +18,14 @@ workspace = true
 
 # Features mínimas a propósito: cada una cuesta tamaño de binario y RAM (objetivo < 20 MB en reposo).
 [dependencies]
-axum = { version = "0.8", default-features = false, features = ["http1", "json", "macros", "matched-path", "tokio", "tracing"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "macros", "matched-path", "tokio", "tracing", "ws"] }
 dotenvy = "0.15"
 rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
 rustix = { version = "1", default-features = false, features = ["fs", "process", "std"] }
 sd-notify = "0.4"
 secrecy = "0.10"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 shared = { path = "../shared" }
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 thiserror = "2"
@@ -37,5 +38,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["a
 [dev-dependencies]
 http-body-util = "0.1"
 serde_json = "1"
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 tempfile = "3"
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake"] }
 tokio = { version = "1", features = ["macros", "rt"] }

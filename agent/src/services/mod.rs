@@ -287,6 +287,11 @@ impl ServiceManager {
         }
     }
 
+    /// Unidad de un servicio registrado.
+    pub async fn unit_of(&self, slug: &ServiceSlug) -> Result<UnitName, ServiceError> {
+        Ok(self.registered(slug).await?.slug.unit())
+    }
+
     async fn registered(&self, slug: &ServiceSlug) -> Result<Service, ServiceError> {
         self.db
             .service_by_slug(slug.clone())

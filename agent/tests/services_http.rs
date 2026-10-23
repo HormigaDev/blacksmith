@@ -18,7 +18,7 @@ use agent::{
     http,
     services::{PermissionCheck, ServiceManager, ServiceName, ServiceSlug},
     state::AppState,
-    systemd::{Scope, Systemctl},
+    systemd::{Journalctl, Scope, Systemctl},
 };
 use axum::{
     Router,
@@ -108,7 +108,12 @@ async fn app() -> Router {
         .unwrap();
     }
     let systemctl = Systemctl::new(&fake().program, Scope::System, Duration::from_millis(500));
-    http::router(AppState::with_systemctl(Arc::new(config), db, systemctl))
+    http::router(AppState::with_commands(
+        Arc::new(config),
+        db,
+        systemctl,
+        Journalctl::default(),
+    ))
 }
 
 async fn send(method: Method, uri: &str) -> (StatusCode, Vec<u8>) {

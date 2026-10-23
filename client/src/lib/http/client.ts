@@ -32,6 +32,8 @@ export const API_ERROR_CODES = [
     'SYSTEMD_PERMISSION_DENIED',
     'SYSTEMD_TIMEOUT',
     'SYSTEMD_FAILED',
+    'LOG_STREAM_LIMIT',
+    'WEB_SOCKET_REQUIRED',
     'UNKNOWN',
 ] as const;
 

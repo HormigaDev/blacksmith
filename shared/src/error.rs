@@ -36,6 +36,10 @@ pub enum ErrorCode {
     SystemdTimeout,
     /// Cualquier otro fallo al hablar con systemd o al medir el proceso.
     SystemdFailed,
+    /// Se alcanzó el máximo de flujos de logs simultáneos (`BLACKSMITH_MAX_LOG_STREAMS`).
+    LogStreamLimit,
+    /// La ruta solo admite WebSocket y la petición no es un handshake válido.
+    WebSocketRequired,
 
     /// Código emitido por un agente más reciente que este cliente. El agente nunca lo envía.
     #[serde(other)]
@@ -92,6 +96,8 @@ mod tests {
             SystemdPermissionDenied,
             SystemdTimeout,
             SystemdFailed,
+            LogStreamLimit,
+            WebSocketRequired,
         ];
         for code in all {
             match code {
@@ -116,6 +122,8 @@ mod tests {
                 | SystemdPermissionDenied
                 | SystemdTimeout
                 | SystemdFailed
+                | LogStreamLimit
+                | WebSocketRequired
                 | Unknown => {}
             }
         }

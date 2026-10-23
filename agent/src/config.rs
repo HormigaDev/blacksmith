@@ -42,6 +42,7 @@ pub mod vars {
     pub const MAX_CONCURRENCY: &str = "BLACKSMITH_MAX_CONCURRENCY";
     pub const GITHUB_WEBHOOK_SECRET_FILE: &str = "BLACKSMITH_GITHUB_WEBHOOK_SECRET_FILE";
     pub const DATABASE_PATH: &str = "BLACKSMITH_DATABASE_PATH";
+    pub const MAX_LOG_STREAMS: &str = "BLACKSMITH_MAX_LOG_STREAMS";
 
     pub(super) const ALL: &[&str] = &[
         ENV,
@@ -56,6 +57,7 @@ pub mod vars {
         MAX_CONCURRENCY,
         GITHUB_WEBHOOK_SECRET_FILE,
         DATABASE_PATH,
+        MAX_LOG_STREAMS,
     ];
 }
 
@@ -144,6 +146,8 @@ pub struct Config {
     pub github_webhook_secret: Option<SecretString>,
     /// Archivo SQLite del agente (ver `db`).
     pub database_path: PathBuf,
+    /// Flujos de logs (`journalctl -f`) simultáneos; cada uno es un proceso hijo.
+    pub max_log_streams: usize,
 }
 
 impl Config {
@@ -207,6 +211,7 @@ impl Config {
                 environment.default_database_path(),
                 |raw| parse_database_path(raw, environment),
             ),
+            max_log_streams: reader.number(vars::MAX_LOG_STREAMS, 4, 1..=32),
         };
 
         reader.finish(config)

@@ -10,7 +10,7 @@ members = [
 [workspace.package]
 version = "1.0.0"
 authors = ["HormigaDev"]
-repository = "https://github.com/HormigaDev/bbel-blacksmith"
+repository = "https://github.com/HormigaDev/blacksmith"
 edition = "2021"
 license = "MIT"
 

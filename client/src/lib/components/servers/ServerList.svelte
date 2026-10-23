@@ -17,6 +17,7 @@
     import { flip } from 'svelte/animate';
 
     import { t } from '$lib/i18n';
+    import { serverAddress, serverHref } from '$lib/servers/address';
     import type { ServerEntry, ServerView } from '$lib/servers/servers.svelte';
 
     import Button from '../ui/Button.svelte';
@@ -52,12 +53,6 @@
     });
 
     const noop = () => {};
-
-    function addressOf(entry: ServerEntry): string {
-        const { profile } = entry;
-        if (profile.kind === 'local') return `localhost:${profile.port}`;
-        return `${profile.username}@${profile.host}${profile.port === 22 ? '' : `:${profile.port}`}`;
-    }
 
     interface Box {
         left: number;
@@ -164,7 +159,7 @@
         onMove(index, to);
         void onCommit();
         announcement = t('servers.reorder.moved', {
-            address: addressOf(entry),
+            address: serverAddress(entry.profile),
             position: to + 1,
             total: entries.length,
         });
@@ -181,6 +176,7 @@
                 <ServerCard
                     {entry}
                     layout={view === 'grid' ? 'tile' : 'row'}
+                    href={serverHref(entry.profile.id)}
                     onConnect={() => onConnect(entry.profile.id)}
                     onDisconnect={() => onDisconnect(entry.profile.id)}
                     onRemove={() => onRemove(entry.profile.id)}
@@ -193,7 +189,7 @@
                             iconOnly
                             data-reorder-handle
                             style="cursor: {draggingId === entry.profile.id ? 'grabbing' : 'grab'}; touch-action: none;"
-                            aria-label={t('servers.reorder.handle', { address: addressOf(entry) })}
+                            aria-label={t('servers.reorder.handle', { address: serverAddress(entry.profile) })}
                             aria-describedby={instructionsId}
                             onpointerdown={(event) => startDrag(event, entry.profile.id)}
                             onkeydown={(event) => keyMove(event, index)}

@@ -40,6 +40,7 @@ pub fn router(state: AppState) -> Router {
         .route("/services/{name}/start", post(routes::services::start))
         .route("/services/{name}/stop", post(routes::services::stop))
         .route("/services/{name}/restart", post(routes::services::restart))
+        .route("/services/{name}/logs/ws", get(routes::logs::stream))
         .route_layer(middleware::from_fn(guard::tunnel_only));
 
     // `Router::layer` aplica la pila a cada ruta por separado: por eso el límite de
