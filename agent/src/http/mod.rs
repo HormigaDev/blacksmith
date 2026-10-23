@@ -36,6 +36,7 @@ pub fn router(state: AppState) -> Router {
     // Superficie de administración: solo alcanzable a través del túnel SSH.
     let admin = Router::new()
         .route("/health", get(routes::health::status))
+        .route("/host", get(routes::health::host))
         .route(
             "/services",
             get(routes::services::list).post(routes::services::register),
@@ -77,6 +78,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/services/{name}/deployment",
             get(routes::services::deployment).put(routes::services::set_deployment),
+        )
+        .route(
+            "/services/{name}/limits",
+            get(routes::services::limits).put(routes::services::set_limits),
         )
         .route(
             "/services/{name}/env",

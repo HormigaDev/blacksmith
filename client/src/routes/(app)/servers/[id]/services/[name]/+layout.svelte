@@ -1,6 +1,6 @@
 <!--
     Marco de la página de un servicio: ruta de navegación, controles (estado y acciones) y pestañas
-    (Logs, Despliegue, Variables). Los datos viven en `serviceStore`: las pestañas comparten la
+    (Resumen, Logs, Despliegue, Web, Recursos y Variables). Los datos viven en `serviceStore`: las pestañas comparten la
     misma copia y el estado se refresca solo mientras se ve.
 -->
 <script lang="ts">
@@ -39,6 +39,11 @@
             current: page.url.pathname === `${base}/deployment`,
         },
         { href: `${base}/site`, label: t('services.tabs.site'), current: page.url.pathname === `${base}/site` },
+        {
+            href: `${base}/limits`,
+            label: t('services.tabs.limits'),
+            current: page.url.pathname === `${base}/limits`,
+        },
         { href: `${base}/env`, label: t('services.tabs.env'), current: page.url.pathname === `${base}/env` },
     ]);
 

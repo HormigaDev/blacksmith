@@ -1,6 +1,7 @@
 <!--
     Resumen del servicio de un vistazo: CPU y memoria con su tendencia de los últimos minutos,
-    memoria frente a su límite (o a la RAM del servidor), swap, procesos, tiempo en marcha,
+    memoria frente a su límite (o a la RAM del servidor), swap, procesos (con sus límites, si los
+    tiene), tiempo en marcha,
     reinicios tras fallos, la versión activa y su web.
 
     Todo sale del cgroup del servicio (systemd): suma todos sus procesos, no solo el principal.
@@ -44,6 +45,15 @@
             : t('services.dashboard.memoryOfHost', { total: bytes(host?.memoryBytes ?? 0) }),
     );
 
+    const swapDetail = $derived.by(() => {
+        if (!host || host.swapBytes === 0) return t('services.dashboard.noSwap');
+        const limit = resources?.swapLimitBytes;
+        if (limit === 0) return t('services.dashboard.swapDisabled');
+        if (limit != null && limit < host.swapBytes) {
+            return t('services.dashboard.swapLimited', { limit: bytes(limit), total: bytes(host.swapBytes) });
+        }
+        return t('services.dashboard.swapDetail', { total: bytes(host.swapBytes) });
+    });
     const since = $derived(resources?.uptimeSecs != null ? (now ?? Date.now()) - resources.uptimeSecs * 1000 : null);
     const releaseAt = $derived(status?.release ? releaseTime(status.release) : null);
     // Sin ninguna lectura (p. ej. parado desde que se abrió), no se dibuja una tendencia vacía.
@@ -61,7 +71,14 @@
         <StatTile
             label={t('services.dashboard.cpu')}
             value={resources?.cpuPercent != null ? cpu(resources.cpuPercent) : unknown}
-            detail={host ? t('services.dashboard.cpuDetail', { cores: formatNumber(host.cpuCores) }) : undefined}
+            detail={resources?.cpuLimitPercent != null && host
+                ? t('services.dashboard.cpuLimited', {
+                      limit: cpu(resources.cpuLimitPercent),
+                      cores: formatNumber(host.cpuCores),
+                  })
+                : host
+                  ? t('services.dashboard.cpuDetail', { cores: formatNumber(host.cpuCores) })
+                  : undefined}
         >
             {#if hasCpu}
                 <Sparkline
@@ -69,6 +86,7 @@
                     values={history.map((sample) => sample.cpu)}
                     times={history.map((sample) => sample.at)}
                     format={cpu}
+                    max={resources?.cpuLimitPercent ?? undefined}
                 />
             {/if}
         </StatTile>
@@ -102,15 +120,15 @@
         <StatTile
             label={t('services.dashboard.swap')}
             value={resources?.swapBytes != null ? bytes(resources.swapBytes) : unknown}
-            detail={host && host.swapBytes > 0
-                ? t('services.dashboard.swapDetail', { total: bytes(host.swapBytes) })
-                : t('services.dashboard.noSwap')}
+            detail={swapDetail}
         />
 
         <StatTile
             label={t('services.dashboard.tasks')}
             value={resources?.tasks != null ? formatNumber(resources.tasks) : unknown}
-            detail={t('services.dashboard.tasksDetail')}
+            detail={resources?.tasksLimit != null
+                ? t('services.dashboard.tasksLimited', { limit: formatNumber(resources.tasksLimit) })
+                : t('services.dashboard.tasksDetail')}
         />
 
         <StatTile

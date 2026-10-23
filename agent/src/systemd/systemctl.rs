@@ -76,6 +76,8 @@ pub enum Operation {
     ShowStatus,
     /// `show -p EnvironmentFiles`.
     ShowEnvironmentFiles,
+    /// `set-property`: límites de recursos del cgroup.
+    SetProperty,
 }
 
 impl Operation {
@@ -85,6 +87,7 @@ impl Operation {
             Self::Stop => "stop",
             Self::Restart => "restart",
             Self::ShowMainPid | Self::ShowStatus | Self::ShowEnvironmentFiles => "show",
+            Self::SetProperty => "set-property",
         }
     }
 }
@@ -215,6 +218,12 @@ pub struct UnitResources {
     pub cpu_nsec: Option<u64>,
     /// `TasksCurrent`: procesos e hilos.
     pub tasks: Option<u64>,
+    /// `CPUQuotaPerSecUSec`: CPU permitida por segundo, en µs (1 000 000 = un núcleo).
+    pub cpu_quota_us: Option<u64>,
+    /// `MemorySwapMax`.
+    pub swap_max: Option<u64>,
+    /// `TasksMax`.
+    pub tasks_max: Option<u64>,
     /// `NRestarts`: reinicios automáticos (`Restart=`) desde el último arranque manual.
     pub restarts: Option<u64>,
     /// `ActiveEnterTimestampMonotonic`: cuándo pasó a activa (µs del reloj monotónico).
@@ -222,7 +231,7 @@ pub struct UnitResources {
 }
 
 /// Propiedades de [`UnitResources`], en el orden de sus campos.
-const RESOURCE_PROPERTIES: [&str; 8] = [
+const RESOURCE_PROPERTIES: [&str; 11] = [
     "MemoryCurrent",
     "MemoryPeak",
     "MemoryMax",
@@ -231,7 +240,35 @@ const RESOURCE_PROPERTIES: [&str; 8] = [
     "TasksCurrent",
     "NRestarts",
     "ActiveEnterTimestampMonotonic",
+    "CPUQuotaPerSecUSec",
+    "MemorySwapMax",
+    "TasksMax",
 ];
+
+/// Duración de `systemctl show` (`infinity`, `500ms`, `1.500000s`, `1min 30s`…) en µs.
+/// `None` sin límite o con un formato desconocido.
+fn parse_timespan_us(raw: &str) -> Option<u64> {
+    if raw == "infinity" || raw.is_empty() {
+        return None;
+    }
+    let mut total = 0.0_f64;
+    for part in raw.split_whitespace() {
+        let split = part
+            .find(|c: char| !c.is_ascii_digit() && c != '.')
+            .unwrap_or(part.len());
+        let (number, unit) = part.split_at_checked(split)?;
+        let factor = match unit {
+            "us" | "µs" => 1.0,
+            "ms" => 1_000.0,
+            "s" => 1_000_000.0,
+            "min" => 60_000_000.0,
+            _ => return None,
+        };
+        total += number.parse::<f64>().ok()? * factor;
+    }
+    // Redondeado al µs: es lo que guarda systemd.
+    Some(total.round() as u64)
+}
 
 /// Ruta de cgroup que se puede unir a `/sys/fs/cgroup` sin salir de él: absoluta, sin `..` y
 /// con los caracteres que usa systemd (los demás los escapa como `\x2d`).
@@ -427,6 +464,34 @@ impl Systemctl {
         })
     }
 
+    /// Aplica propiedades de control de recursos (`systemctl set-property`), al momento y de forma
+    /// persistente. Requiere polkit (verbo `set-property`). Ver [`crate::limits`].
+    pub async fn set_properties(
+        &self,
+        unit: &UnitName,
+        properties: &[String],
+    ) -> Result<(), SystemctlError> {
+        let operation = Operation::SetProperty;
+        let after: Vec<&str> = properties.iter().map(String::as_str).collect();
+        let execution = self
+            .execute_with(
+                operation,
+                &[],
+                unit,
+                &after,
+                self.timeout.min(QUERY_TIMEOUT),
+            )
+            .await?;
+        if execution.status.success() {
+            tracing::info!(%unit, ?properties, "límites de recursos aplicados");
+            Ok(())
+        } else {
+            let error = classify(operation, unit, execution.status, &execution.stderr);
+            tracing::warn!(%unit, %error, "no se pudieron aplicar los límites");
+            Err(error)
+        }
+    }
+
     /// Como [`Systemctl::run`] con otro tiempo máximo: para `Type=oneshot` largos (despliegues),
     /// `start` espera a que el trabajo termine y su resultado es el del trabajo.
     pub async fn run_with_timeout(
@@ -450,8 +515,21 @@ impl Systemctl {
         unit: &UnitName,
         timeout: Duration,
     ) -> Result<Execution, SystemctlError> {
+        self.execute_with(operation, options, unit, &[], timeout)
+            .await
+    }
+
+    /// `after`: argumentos tras la unidad (las propiedades de `set-property`).
+    async fn execute_with(
+        &self,
+        operation: Operation,
+        options: &[&str],
+        unit: &UnitName,
+        after: &[&str],
+        timeout: Duration,
+    ) -> Result<Execution, SystemctlError> {
         let mut child = self
-            .command(operation, options, unit)
+            .command(operation, options, unit, after)
             .spawn()
             .map_err(SystemctlError::Io)?;
         // `async move`: si se agota el tiempo, el futuro se descarta con el hijo dentro y
@@ -471,6 +549,7 @@ impl Systemctl {
         operation: Operation,
         options: &[&str],
         unit: &UnitName,
+        after: &[&str],
     ) -> tokio::process::Command {
         let mut command = std::process::Command::new(&self.program);
         command
@@ -492,6 +571,7 @@ impl Systemctl {
             .args(options)
             .arg("--")
             .arg(unit.as_str())
+            .args(after)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -583,6 +663,13 @@ fn parse_status(stdout: &[u8]) -> Option<UnitStatus> {
         tasks: counter(5),
         restarts: counter(6),
         active_since_us: counter(7).filter(|value| *value > 0),
+        cpu_quota_us: counters
+            .get(8)
+            .copied()
+            .flatten()
+            .and_then(parse_timespan_us),
+        swap_max: counter(9),
+        tasks_max: counter(10),
     };
     let sub_state = sub?;
     if sub_state.is_empty()
@@ -761,6 +848,7 @@ mod tests {
             b"MainPID=2286\nNRestarts=2\nLoadState=loaded\nActiveState=active\nSubState=running\n\
               ActiveEnterTimestampMonotonic=35279981\nMemoryCurrent=9285632\nMemoryPeak=12783616\n\
               MemorySwapCurrent=1081344\nMemoryMax=infinity\nCPUUsageNSec=98258438000\nTasksCurrent=3\n\
+              CPUQuotaPerSecUSec=1.500000s\nMemorySwapMax=0\nTasksMax=16604\n\
               ControlGroup=/user.slice/user-1000.slice/user@1000.service/app.slice/blacksmith@api.service\n",
         )
         .unwrap();
@@ -781,6 +869,9 @@ mod tests {
                 tasks: Some(3),
                 restarts: Some(2),
                 active_since_us: Some(35_279_981),
+                cpu_quota_us: Some(1_500_000),
+                swap_max: Some(0),
+                tasks_max: Some(16_604),
             }
         );
         let stopped = parse_status(
@@ -970,9 +1061,45 @@ mod tests {
         ));
     }
 
+    // Formatos reales de `CPUQuotaPerSecUSec` (systemd 255).
+    #[test]
+    fn duraciones_de_systemd() {
+        assert_eq!(parse_timespan_us("1.500000s"), Some(1_500_000));
+        assert_eq!(parse_timespan_us("500ms"), Some(500_000));
+        assert_eq!(parse_timespan_us("2s"), Some(2_000_000));
+        assert_eq!(parse_timespan_us("1min 30s"), Some(90_000_000));
+        assert_eq!(parse_timespan_us("10ms 500us"), Some(10_500));
+        assert_eq!(parse_timespan_us("infinity"), None);
+        assert_eq!(parse_timespan_us("[not set]"), None);
+        assert_eq!(parse_timespan_us("1h"), None);
+    }
+
+    #[test]
+    fn set_property_va_tras_la_unidad() {
+        let command = Systemctl::default().command(
+            Operation::SetProperty,
+            &[],
+            &unit(),
+            &["MemoryMax=infinity", "CPUQuota="],
+        );
+        let args: Vec<_> = command.as_std().get_args().collect();
+        assert_eq!(
+            args,
+            [
+                "--no-ask-password",
+                "--no-pager",
+                "set-property",
+                "--",
+                "api.service",
+                "MemoryMax=infinity",
+                "CPUQuota="
+            ]
+        );
+    }
+
     #[test]
     fn argumentos_y_entorno() {
-        let command = Systemctl::default().command(Operation::Restart, &[], &unit());
+        let command = Systemctl::default().command(Operation::Restart, &[], &unit(), &[]);
         let std = command.as_std();
         assert_eq!(std.get_program(), SYSTEMCTL_PATH);
         let args: Vec<_> = std.get_args().collect();
@@ -998,6 +1125,7 @@ mod tests {
             Operation::ShowMainPid,
             &["-p", "MainPID", "--value"],
             &unit(),
+            &[],
         );
         let args: Vec<_> = command.as_std().get_args().collect();
         assert_eq!(

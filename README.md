@@ -26,12 +26,14 @@ El agente corre como el usuario sin privilegios `blacksmith` y con `NoNewPrivile
 modo que no puede convertirse en root de ninguna forma. Los permisos para gestionar servicios
 se los concede **polkit**, con una regla que solo le permite:
 
-- `start`, `stop` y `restart` de `blacksmith@<servicio>.service` (los servicios),
+- `start`, `stop` y `restart` de `blacksmith@<servicio>.service` (los servicios), y
+  `set-property` para sus límites de recursos (ver «Límites de recursos»),
 - `start` y `stop` de `blacksmith-deploy@<servicio>.service` (sus despliegues),
 - `start` de `blacksmith-nginx.service` y de `blacksmith-certbot@<dominio>.service` (aplicar la
   configuración de nginx y pedir certificados; ver «Sitios web con nginx»).
 
 Cualquier otra cosa que pida (otras unidades como `ssh` o el propio `nginx`, `enable`, `mask`,
+`set-property` de los despliegues o de otras unidades,
 reiniciar el equipo…) se le deniega. Es una lista de permitidos: no hay que mantener una lista
 de unidades críticas.
 
@@ -269,6 +271,36 @@ un host desconocido no reciba ese sitio.
 
 En **modo local** usa dominios `*.localhost` (p. ej. `app.localhost`, que los navegadores
 resuelven a 127.0.0.1) y sin HTTPS: Let's Encrypt solo emite para dominios públicos.
+
+## Límites de recursos
+
+Sin límites, un servicio usa lo que el servidor tenga libre. En la pestaña **Recursos** de cada
+servicio se le puede fijar:
+
+| Límite | Propiedad de systemd | Notas |
+|---|---|---|
+| CPU máxima | `CPUQuota=` | 100 % = un núcleo; hasta el total del servidor (4 núcleos → 400 %). |
+| Prioridad | `CPUWeight=` / `IOWeight=` | Baja (25), normal (100) o alta (400): reparte CPU y disco cuando no hay para todos. |
+| Memoria máxima | `MemoryMax=` | Desde 32 MB hasta la RAM del servidor. Si la supera, el kernel detiene el proceso y systemd lo reinicia. |
+| Swap | `MemorySwapMax=` | Sin límite, sin swap o hasta una cantidad. |
+| Procesos e hilos | `TasksMax=` | Frena un fallo que crea procesos sin parar. |
+
+Cubren todos los procesos del servicio (su cgroup) y se aplican **al momento, sin reiniciarlo**:
+el agente llama a `systemctl set-property`, que además los guarda como drop-ins en
+`/etc/systemd/system.control/`, así que persisten tras reiniciar el servidor. El agente envía
+siempre la misma lista cerrada de propiedades con valores numéricos validados, y systemd solo
+acepta ahí propiedades de control de recursos. Al dar de baja un servicio, sus límites se quitan.
+El resumen del servicio muestra el consumo frente a sus límites.
+
+## Datos del servidor
+
+La página de cada servidor muestra, debajo de sus servicios, su sistema operativo y kernel, el
+equipo (y si es una máquina virtual: KVM, Xen, LXC…), procesador, hilos y carga, memoria y
+swap, tarjetas gráficas, discos con su espacio libre y las interfaces de red con sus direcciones
+y tráfico (sin las virtuales de contenedores). Se refresca cada 10 s mientras se ve
+(`GET /api/v1/host`). El agente lo lee de `/proc`, `/sys` y `/etc`; lo que no pueda averiguar
+no se muestra. Para leer las direcciones de red, su unidad permite sockets `AF_NETLINK` (sin
+`CAP_NET_ADMIN` solo sirven para consultar).
 
 ## Desarrollo
 

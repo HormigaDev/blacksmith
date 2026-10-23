@@ -179,6 +179,14 @@ es un dato del sitio (`tlsDetail`), no un mensaje de error.
 - `API_ERROR_CODES` debe reflejar `shared/src/error.rs`. Al añadir un código en Rust, se añade
   aquí y en `errors.agent.<CODE>` de `es.ts` (si falta la traducción, no compila).
 
+### Recursos y datos del servidor
+
+`ResourceLimitsForm` (pestaña Recursos) edita los límites de un servicio: CPU y prioridad,
+memoria, swap y procesos. Un campo vacío es «sin límite»; valida con las reglas del agente
+(`limits::validate`) contra la capacidad del servidor que viene con los límites, y enseña el
+consumo actual junto a cada campo. `HostOverview` muestra los datos del servidor (`HostInfo`) en
+su página; lo que el agente no supo averiguar llega como `null` y no se muestra.
+
 ## 5. Tests
 
 Tests unitarios, de componente, E2E, de accesibilidad y visuales, y el Workbench: ver

@@ -18,9 +18,9 @@ use rustix::process::Pid;
 
 use shared::{
     ActiveState, DeployKey, DeployKind, DeployRun, DeployStatus, EnvVariable, GitHubAccess,
-    GlobalEnvironment, RegisterService, RepositoryAccess, ServiceActionReport, ServiceDeployment,
-    ServiceEnvironment, ServiceOutcome, ServiceStatusReport, ServiceSummary, SetGitHubAccess,
-    UpdateDeployment,
+    GlobalEnvironment, RegisterService, RepositoryAccess, ResourceLimits, ServiceActionReport,
+    ServiceDeployment, ServiceEnvironment, ServiceLimits, ServiceOutcome, ServiceStatusReport,
+    ServiceSummary, SetGitHubAccess, UpdateDeployment,
 };
 
 use self::deployment::InvalidDeployment;
@@ -39,6 +39,7 @@ use crate::{
     envfile::{EnvFileError, EnvStore},
     error::DisplayChain,
     github::{GitHubAccessError, GitHubStore},
+    limits::{self, InvalidLimits},
     metrics::{MetricsError, ProcessSampler},
     resources::{CgroupCpu, host_capacity},
     systemd::{Action, Outcome, Systemctl, SystemctlError, UnitName},
@@ -290,6 +291,9 @@ pub enum ServiceError {
 
     #[error(transparent)]
     GitHub(#[from] GitHubAccessError),
+
+    #[error(transparent)]
+    InvalidLimits(#[from] InvalidLimits),
 }
 
 /// Credenciales de un despliegue (vacías si no hacen falta).
@@ -741,6 +745,41 @@ impl ServiceManager {
         }
     }
 
+    /// Límites de recursos guardados; sin límites si nunca se configuraron.
+    pub async fn limits(&self, slug: &ServiceSlug) -> Result<ServiceLimits, ServiceError> {
+        let service = self.registered(slug).await?;
+        let (limits, updated_at) = match self.db.limits(service.id).await? {
+            Some((limits, updated_at)) => (limits, Some(updated_at)),
+            None => (ResourceLimits::default(), None),
+        };
+        Ok(ServiceLimits {
+            limits,
+            host: host_capacity(),
+            updated_at,
+        })
+    }
+
+    /// Valida los límites, los aplica a la unidad (al momento, sin reiniciar) y, solo si systemd
+    /// los aceptó, los guarda.
+    pub async fn set_limits(
+        &self,
+        slug: &ServiceSlug,
+        limits: ResourceLimits,
+    ) -> Result<ServiceLimits, ServiceError> {
+        let service = self.registered(slug).await?;
+        let host = host_capacity();
+        let limits = limits::validate(limits, host)?;
+        self.systemctl
+            .set_properties(&service.slug.unit(), &limits::properties(&limits))
+            .await?;
+        let updated_at = self.db.set_limits(service.id, limits).await?;
+        Ok(ServiceLimits {
+            limits,
+            host,
+            updated_at: Some(updated_at),
+        })
+    }
+
     /// Servicios registrados, en orden de alta.
     pub async fn list(&self) -> Result<Vec<ServiceSummary>, ServiceError> {
         Ok(self.db.services().await?.iter().map(summary).collect())
@@ -767,7 +806,20 @@ impl ServiceManager {
     /// Quita el servicio del registro y borra su archivo de variables (son secretos: no deben
     /// quedarse en el servidor). No para ni modifica la unidad de systemd.
     pub async fn unregister(&self, slug: &ServiceSlug) -> Result<(), ServiceError> {
-        self.registered(slug).await?;
+        let service = self.registered(slug).await?;
+        // Los límites viven en systemd (drop-ins), no en el registro: se quitan para que un
+        // servicio que se registre luego con el mismo nombre no los herede. Sin bloquear el borrado.
+        if self.db.limits(service.id).await?.is_some()
+            && let Err(error) = self
+                .systemctl
+                .set_properties(
+                    &service.slug.unit(),
+                    &limits::properties(&ResourceLimits::default()),
+                )
+                .await
+        {
+            tracing::warn!(name = %slug, %error, "no se pudieron quitar los límites de la unidad");
+        }
         self.env.remove(slug).await?;
         // Especificación y copia del token del despliegue.
         let dir = self.paths.deployment_dir(slug);

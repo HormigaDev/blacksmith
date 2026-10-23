@@ -6,6 +6,7 @@ use crate::{
     config::Config,
     db::Database,
     deploy::Paths,
+    host::HostProbe,
     nginx::SiteManager,
     routes::logs::LogTimings,
     services::ServiceManager,
@@ -25,6 +26,8 @@ pub struct AppState {
     pub services: ServiceManager,
     /// Sitios de nginx de los servicios.
     pub sites: SiteManager,
+    /// Datos del servidor (sistema, hardware y uso).
+    pub host: HostProbe,
     pub journal: Journalctl,
     /// Cupos de flujos de logs simultáneos (`BLACKSMITH_MAX_LOG_STREAMS`).
     pub log_streams: Arc<Semaphore>,
@@ -67,6 +70,7 @@ impl AppState {
             db,
             services,
             sites,
+            host: HostProbe::default(),
             journal,
             log_streams,
             log_timings: LogTimings::default(),

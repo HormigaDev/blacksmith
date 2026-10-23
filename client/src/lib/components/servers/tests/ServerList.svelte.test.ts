@@ -5,7 +5,7 @@ import { render } from 'vitest-browser-svelte';
 
 import type { ServerEntry, ServerView } from '$lib/servers/servers.svelte';
 
-import ServerList from './ServerList.svelte';
+import ServerList from '../ServerList.svelte';
 
 const entry = (host: string): ServerEntry => ({
     profile: { id: `deploy@${host}:22`, kind: 'ssh', host, port: 22, username: 'deploy' },

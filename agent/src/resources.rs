@@ -57,8 +57,14 @@ impl CgroupCpu {
             memory_peak_bytes: resources.memory_peak,
             memory_limit_bytes: resources.memory_max,
             swap_bytes: resources.swap.filter(|_| running),
+            swap_limit_bytes: resources.swap_max,
             cpu_percent,
+            // 1 000 000 µs por segundo = un núcleo = 100 %.
+            cpu_limit_percent: resources
+                .cpu_quota_us
+                .map(|us| (us as f64 / 1_000.0).round() / 10.0),
             tasks: resources.tasks.filter(|_| running),
+            tasks_limit: resources.tasks_max,
             restarts: resources.restarts,
             uptime_secs: resources
                 .active_since_us

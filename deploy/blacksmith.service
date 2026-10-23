@@ -107,8 +107,9 @@ SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
 SystemCallErrorNumber=EPERM
-# AF_UNIX: D-Bus (systemctl), journald y sd_notify.
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# AF_UNIX: D-Bus (systemctl), journald y sd_notify. AF_NETLINK: leer las direcciones de red del
+# servidor (GET /api/v1/host); sin CAP_NET_ADMIN, netlink solo permite consultar, no cambiar nada.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 # El agente solo habla con loopback (Nginx y el túnel SSH). Las tareas que necesiten red
 # (p. ej. git fetch al desplegar) deben ejecutarse en su propia unit transitoria con su propio
 # sandbox, no relajando esta.

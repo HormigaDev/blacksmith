@@ -89,6 +89,8 @@
     --layout-tile-min-width: 13rem;
     /* Columna del estado en el historial de despliegues (alinea las filas). */
     --deploy-state-width: 6rem;
+    /* Selector de unidad (MB/GB) junto a una cantidad. */
+    --unit-select-width: 6.5rem;
     --log-viewer-height: 32rem;
     --control-height-sm: 1.75rem;
     --control-height-md: 2.25rem;

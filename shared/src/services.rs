@@ -110,10 +110,16 @@ pub struct ServiceResources {
     /// Límite de memoria configurado (`MemoryMax=`).
     pub memory_limit_bytes: Option<u64>,
     pub swap_bytes: Option<u64>,
+    /// Límite de swap (`MemorySwapMax=`); `Some(0)` = sin swap.
+    pub swap_limit_bytes: Option<u64>,
     /// CPU desde la lectura anterior, con un decimal. 100 = un núcleo completo (como `top`).
     pub cpu_percent: Option<f64>,
+    /// Límite de CPU (`CPUQuota=`), en la misma escala (100 = un núcleo).
+    pub cpu_limit_percent: Option<f64>,
     /// Procesos e hilos.
     pub tasks: Option<u64>,
+    /// Límite de procesos e hilos (`TasksMax=`).
+    pub tasks_limit: Option<u64>,
     /// Reinicios automáticos tras un fallo (`Restart=`).
     pub restarts: Option<u64>,
     /// Segundos en marcha desde el último arranque.
@@ -169,7 +175,7 @@ mod tests {
         };
         assert_eq!(
             serde_json::to_string(&report).unwrap(),
-            r#"{"name":"api","unit":"blacksmith@api.service","loadState":"not-found","activeState":"inactive","subState":"dead","pid":null,"metrics":null,"deployed":false,"release":null,"previousRelease":null,"resources":{"memoryBytes":null,"memoryPeakBytes":null,"memoryLimitBytes":null,"swapBytes":null,"cpuPercent":null,"tasks":null,"restarts":null,"uptimeSecs":null},"host":{"cpuCores":0,"memoryBytes":0,"swapBytes":0}}"#
+            r#"{"name":"api","unit":"blacksmith@api.service","loadState":"not-found","activeState":"inactive","subState":"dead","pid":null,"metrics":null,"deployed":false,"release":null,"previousRelease":null,"resources":{"memoryBytes":null,"memoryPeakBytes":null,"memoryLimitBytes":null,"swapBytes":null,"swapLimitBytes":null,"cpuPercent":null,"cpuLimitPercent":null,"tasks":null,"tasksLimit":null,"restarts":null,"uptimeSecs":null},"host":{"cpuCores":0,"memoryBytes":0,"swapBytes":0}}"#
         );
         let metrics = ProcessMetrics {
             rss_bytes: 1_048_576,

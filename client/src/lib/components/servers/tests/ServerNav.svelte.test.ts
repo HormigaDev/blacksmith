@@ -4,7 +4,7 @@ import { render } from 'vitest-browser-svelte';
 
 import type { ServerEntry } from '$lib/servers/servers.svelte';
 
-import ServerNav from './ServerNav.svelte';
+import ServerNav from '../ServerNav.svelte';
 
 const vps = {
     id: 'deploy@vps.example.com:22',

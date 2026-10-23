@@ -5,7 +5,7 @@ import { render } from 'vitest-browser-svelte';
 
 import type { ServerEntry } from '$lib/servers/servers.svelte';
 
-import ServerCard from './ServerCard.svelte';
+import ServerCard from '../ServerCard.svelte';
 
 const PROFILE = {
     id: 'deploy@vps.example.com:22',

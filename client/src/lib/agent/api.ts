@@ -14,23 +14,28 @@ import {
     type GitHubAccess,
     type EnvVariable,
     type GlobalEnvironment,
+    type HostInfo,
     type LogEvent,
     parseDeployRun,
     parseDeployKey,
     parseDeployRuns,
     parseGitHubAccess,
     parseGlobalEnvironment,
+    parseHostInfo,
     parseLogEvent,
     parseServiceDeployment,
     parseServiceEnvironment,
+    parseServiceLimits,
     parseServiceList,
     parseServiceStatus,
     parseSite,
     parseServiceSummary,
     type RegisterService,
+    type ResourceLimits,
     type ServiceAction,
     type ServiceDeployment,
     type ServiceEnvironment,
+    type ServiceLimits,
     type ServiceStatus,
     type ServiceSummary,
     type Site,
@@ -109,6 +114,21 @@ export async function createDeployKey(client: HttpClient, name: string): Promise
     const key = await client.post(servicePath(name, '/deploy-key'), { parse: parseDeployKey });
     if (!key) throw new TypeError('respuesta del agente inesperada: llave vacía');
     return key;
+}
+
+/** Sistema, hardware y uso actual del servidor. */
+export function hostInfo(client: HttpClient, signal?: AbortSignal): Promise<HostInfo> {
+    return client.get('host', { parse: parseHostInfo, signal });
+}
+
+/** Límites de recursos del servicio (sin límites si nunca se pusieron). */
+export function serviceLimits(client: HttpClient, name: string): Promise<ServiceLimits> {
+    return client.get(servicePath(name, '/limits'), { parse: parseServiceLimits });
+}
+
+/** Aplica los límites al momento (sin reiniciar el servicio) y los guarda. */
+export function saveServiceLimits(client: HttpClient, name: string, limits: ResourceLimits): Promise<ServiceLimits> {
+    return client.put(servicePath(name, '/limits'), { body: limits, parse: parseServiceLimits });
 }
 
 /** Sitio de nginx del servicio, o `null` si no tiene. */

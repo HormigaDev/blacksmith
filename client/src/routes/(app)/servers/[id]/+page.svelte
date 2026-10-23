@@ -1,4 +1,4 @@
-<!-- Página de un servidor: sus servicios registrados. -->
+<!-- Página de un servidor: sus datos (sistema, hardware y uso) y sus servicios registrados. -->
 <script lang="ts">
     import PlusIcon from '@lucide/svelte/icons/plus';
     import ServerCogIcon from '@lucide/svelte/icons/server-cog';
@@ -6,10 +6,11 @@
     import { page } from '$app/state';
     import type { RegisterService, ServiceSummary } from '$lib/agent';
     import { APP_NAME } from '$lib/app';
+    import HostOverview from '$lib/components/servers/HostOverview.svelte';
     import ServerStatusBadge from '$lib/components/servers/ServerStatusBadge.svelte';
     import RegisterServiceForm from '$lib/components/services/RegisterServiceForm.svelte';
     import ServiceCard from '$lib/components/services/ServiceCard.svelte';
-    import { Badge, Button, Dialog, Spinner } from '$lib/components/ui';
+    import { Badge, Button, Dialog, Panel, Spinner } from '$lib/components/ui';
     import { describeError } from '$lib/http';
     import { t } from '$lib/i18n';
     import { serverAddress, serverHref, serviceHref } from '$lib/servers/address';
@@ -23,8 +24,18 @@
 
     let registerOpen = $state(false);
 
+    /** Cada cuánto se refrescan los datos del servidor a la vista (memoria, discos, carga). */
+    const HOST_INTERVAL_MS = 10_000;
+
     $effect(() => {
         if (services && connected) void services.load();
+    });
+
+    $effect(() => {
+        if (!services || !connected) return;
+        void services.loadHost();
+        const timer = setInterval(() => void services.loadHost(), HOST_INTERVAL_MS);
+        return () => clearInterval(timer);
     });
 
     async function register(service: RegisterService): Promise<void> {
@@ -79,30 +90,45 @@
                     {entry.status === 'error' ? t('servers.card.retry') : t('servers.card.connect')}
                 </Button>
             </div>
-        {:else if services.error && services.list === null}
-            <div class="empty">
-                <p class="alert" role="alert">{services.error}</p>
-                <Button onclick={() => services.load()}>{t('services.list.retry')}</Button>
-            </div>
-        {:else if services.list === null}
-            <div class="empty"><Spinner label={t('services.list.loading')} /></div>
-        {:else if services.list.length === 0}
-            <div class="empty">
-                <span class="empty-icon"><ServerCogIcon /></span>
-                <p class="empty-title">{t('servers.detail.services.emptyTitle')}</p>
-            </div>
         {:else}
-            <ul class="grid" aria-label={t('servers.detail.services.title')}>
-                {#each services.list as service (service.name)}
-                    <li>
-                        <ServiceCard
-                            {service}
-                            href={serviceHref(serverId, service.name)}
-                            onRemove={() => remove(service)}
-                        />
-                    </li>
-                {/each}
-            </ul>
+            <section class="services" aria-labelledby="services-title">
+                <h2 class="section-title" id="services-title">{t('servers.detail.services.title')}</h2>
+                {#if services.error && services.list === null}
+                    <div class="empty">
+                        <p class="alert" role="alert">{services.error}</p>
+                        <Button onclick={() => services.load()}>{t('services.list.retry')}</Button>
+                    </div>
+                {:else if services.list === null}
+                    <div class="empty"><Spinner label={t('services.list.loading')} /></div>
+                {:else if services.list.length === 0}
+                    <div class="empty">
+                        <span class="empty-icon"><ServerCogIcon /></span>
+                        <p class="empty-title">{t('servers.detail.services.emptyTitle')}</p>
+                    </div>
+                {:else}
+                    <ul class="grid" aria-labelledby="services-title">
+                        {#each services.list as service (service.name)}
+                            <li>
+                                <ServiceCard
+                                    {service}
+                                    href={serviceHref(serverId, service.name)}
+                                    onRemove={() => remove(service)}
+                                />
+                            </li>
+                        {/each}
+                    </ul>
+                {/if}
+            </section>
+
+            <Panel title={t('host.title')}>
+                {#if services.host}
+                    <HostOverview host={services.host} />
+                {:else if services.hostError}
+                    <p class="alert" role="alert">{services.hostError}</p>
+                {:else}
+                    <Spinner label={t('host.loading')} />
+                {/if}
+            </Panel>
         {/if}
     </div>
 
@@ -148,6 +174,17 @@
         display: flex;
         align-items: center;
         gap: var(--space-4);
+    }
+
+    .services {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-4);
+    }
+
+    .section-title {
+        font-size: var(--font-size-lg);
+        font-weight: var(--font-weight-semibold);
     }
 
     .link {

@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'vitest';
 
 import {
+    parseHostInfo,
     parseLogEvent,
+    parseServiceLimits,
     parseServiceDeployment,
     parseSite,
     parseServiceEnvironment,
@@ -73,6 +75,9 @@ describe('parseServiceStatus', () => {
             memoryBytes: 1024,
             memoryPeakBytes: 2048,
             memoryLimitBytes: null,
+            swapLimitBytes: null,
+            cpuLimitPercent: null,
+            tasksLimit: null,
             swapBytes: 0,
             cpuPercent: 1.5,
             tasks: 3,
@@ -151,5 +156,83 @@ describe('parseServiceDeployment y parseServiceEnvironment', () => {
         };
         expect(parseServiceEnvironment(env)).toEqual(env);
         expect(() => parseServiceEnvironment({ ...env, variables: [{ key: 'A' }] })).toThrow(TypeError);
+    });
+});
+
+describe('límites y servidor', () => {
+    test('límites del servicio', () => {
+        const limits = {
+            limits: { cpuPercent: 150, priority: 'high', memoryMaxBytes: 1024, swapMaxBytes: 0, tasksMax: null },
+            host: { cpuCores: 2, memoryBytes: 4096, swapBytes: 0 },
+            updatedAt: 1,
+        };
+        expect(parseServiceLimits(limits)).toEqual(limits);
+        expect(() => parseServiceLimits({ ...limits, limits: { ...limits.limits, priority: 'max' } })).toThrow(
+            TypeError,
+        );
+        expect(() => parseServiceLimits({ ...limits, limits: { ...limits.limits, cpuPercent: '150' } })).toThrow(
+            TypeError,
+        );
+    });
+
+    test('datos del servidor', () => {
+        const host = {
+            hostname: null,
+            os: { name: 'Ubuntu 24.04.1 LTS', id: 'ubuntu', kernel: null, architecture: 'x86_64' },
+            machine: null,
+            virtualization: 'kvm',
+            cpu: { model: null, vendor: null, physicalCores: null, logicalCores: 2, frequencyMhz: null },
+            gpus: [{ name: 'virtio', vendor: null, driver: 'virtio-pci', memoryBytes: null, address: '0000:00:01.0' }],
+            memory: { totalBytes: 4, availableBytes: 3, swapTotalBytes: 0, swapFreeBytes: 0 },
+            disks: [
+                {
+                    mountPoint: '/',
+                    device: '/dev/vda1',
+                    fileSystem: 'ext4',
+                    kind: 'ssd',
+                    totalBytes: 10,
+                    availableBytes: 5,
+                    readOnly: false,
+                },
+            ],
+            network: [{ name: 'eth0', addresses: ['203.0.113.7/24'], receivedBytes: 1, transmittedBytes: 2 }],
+            uptimeSecs: 60,
+            bootTime: 1,
+            loadAverage: [0.5, 0.25, 0],
+            timezone: null,
+            agentVersion: '1.0.0',
+        };
+        expect(parseHostInfo(host)).toEqual(host);
+        expect(() => parseHostInfo({ ...host, loadAverage: [1, 2] })).toThrow(TypeError);
+        expect(() => parseHostInfo({ ...host, disks: [{ ...host.disks[0], kind: 'nvme' }] })).toThrow(TypeError);
+    });
+
+    test('un agente sin límites en el estado sigue funcionando', () => {
+        const status = {
+            name: 'api',
+            unit: 'blacksmith@api.service',
+            loadState: 'loaded',
+            activeState: 'active',
+            subState: 'running',
+            pid: 1,
+            metrics: null,
+            deployed: true,
+            release: null,
+            previousRelease: null,
+            resources: {
+                memoryBytes: 1,
+                memoryPeakBytes: null,
+                memoryLimitBytes: null,
+                swapBytes: null,
+                cpuPercent: null,
+                tasks: null,
+                restarts: null,
+                uptimeSecs: null,
+            },
+            host: { cpuCores: 1, memoryBytes: 1, swapBytes: 0 },
+        };
+        const parsed = parseServiceStatus(status);
+        expect(parsed.resources.cpuLimitPercent).toBeNull();
+        expect(parsed.resources.tasksLimit).toBeNull();
     });
 });

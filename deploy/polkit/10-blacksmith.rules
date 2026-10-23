@@ -5,12 +5,14 @@
 //
 // - Solo afecta al usuario `blacksmith`; para el resto devuelve NOT_HANDLED.
 // - Le permite:
-//     · start, stop y restart de `blacksmith@<nombre>.service` (los servicios desplegados);
+//     · start, stop y restart de `blacksmith@<nombre>.service` (los servicios desplegados), y
+//       set-property para sus límites de recursos (systemd solo acepta ahí propiedades de
+//       control de recursos: CPU, memoria, swap, procesos; nunca ExecStart= ni similares);
 //     · start y stop de `blacksmith-deploy@<nombre>.service` (sus despliegues);
 //     · start de `blacksmith-nginx.service` (valida y recarga nginx: dos órdenes fijas) y de
 //       `blacksmith-certbot@<dominio>.service` (pide un certificado de Let's Encrypt). Ver deploy/nginx/.
 //   Nada más: otras unidades (ssh, nginx, dbus, el propio agente…), otros verbos (enable, mask,
-//   kill, set-property…), crear unidades transitorias y cualquier otra acción de polkit
+//   kill, set-property fuera de los servicios…), crear unidades transitorias y cualquier otra acción de polkit
 //   (daemon-reload, reiniciar el equipo…) se le deniegan explícitamente, sin pasar a las reglas
 //   siguientes. Es una lista de permitidos: no hace falta mantener una lista de unidades críticas.
 // - El prefijo `20-`/`49-`/`50-` de las reglas de la distribución es posterior: polkit evalúa
@@ -30,7 +32,8 @@ polkit.addRule(function (action, subject) {
         var verb = action.lookup("verb");
         if (typeof unit === "string" && /^blacksmith(-deploy)?@[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?\.service$/.test(unit)) {
             var deploy = unit.indexOf("blacksmith-deploy@") === 0;
-            if (verb === "start" || verb === "stop" || (verb === "restart" && !deploy)) {
+            if (verb === "start" || verb === "stop"
+                || ((verb === "restart" || verb === "set-property") && !deploy)) {
                 return polkit.Result.YES;
             }
         }

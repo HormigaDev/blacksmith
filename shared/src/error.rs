@@ -72,6 +72,8 @@ pub enum ErrorCode {
     /// No se pudo aplicar en nginx: integración sin instalar (deploy/nginx/install.sh), sin
     /// permiso de polkit o nginx no disponible.
     NginxUnavailable,
+    /// Los límites de recursos no son válidos (el mensaje dice cuál y por qué).
+    InvalidLimits,
 
     /// Código emitido por un agente más reciente que este cliente. El agente nunca lo envía.
     #[serde(other)]
@@ -145,6 +147,7 @@ mod tests {
             DomainInUse,
             NginxRejected,
             NginxUnavailable,
+            InvalidLimits,
         ];
         for code in all {
             match code {
@@ -186,6 +189,7 @@ mod tests {
                 | DomainInUse
                 | NginxRejected
                 | NginxUnavailable
+                | InvalidLimits
                 | Unknown => {}
             }
         }

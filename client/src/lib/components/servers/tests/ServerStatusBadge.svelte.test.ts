@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 
-import ServerStatusBadge from './ServerStatusBadge.svelte';
+import ServerStatusBadge from '../ServerStatusBadge.svelte';
 
 describe('ServerStatusBadge', () => {
     test('cada estado con su texto', async () => {

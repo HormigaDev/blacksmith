@@ -4,8 +4,8 @@
 //!   unidad). No se siguen enlaces simbólicos al abrirlo.
 //! - Una sola conexión protegida por un mutex: el agente es el único escritor y las operaciones
 //!   son pocas y cortas. Cada una se ejecuta en `spawn_blocking` para no bloquear el runtime.
-//! - Sin migraciones: el esquema se crea si la base de datos está vacía y, si tiene otra
-//!   versión, el agente no arranca (ver `schema.sql`).
+//! - El esquema se crea si la base de datos está vacía. Una versión anterior se actualiza con las
+//!   migraciones de [`MIGRATIONS`] (solo añaden tablas); si no hay camino, el agente no arranca.
 
 use std::{
     fmt, fs, io,
@@ -20,15 +20,21 @@ use rusqlite::{
 };
 
 use shared::{
-    DeployKind, DeployRun, DeployStatus, RepositoryAccess, RepositoryRef, SiteConfig, SiteTemplate,
-    TlsStatus, UpdateDeployment,
+    DeployKind, DeployRun, DeployStatus, Priority, RepositoryAccess, RepositoryRef, ResourceLimits,
+    SiteConfig, SiteTemplate, TlsStatus, UpdateDeployment,
 };
 
 use crate::services::{Service, ServiceDescription, ServiceId, ServiceName, ServiceSlug};
 
 /// Versión del esquema de `schema.sql`. Se guarda en `PRAGMA user_version`.
-pub const SCHEMA_VERSION: i64 = 10;
+pub const SCHEMA_VERSION: i64 = 11;
 const SCHEMA: &str = include_str!("schema.sql");
+
+/// Migraciones `(versión de origen, SQL)`, en orden: cada una lleva a la siguiente versión. Una
+/// base de datos nueva las ejecuta todas tras `schema.sql`.
+const MIGRATIONS: [(i64, &str); 1] = [(10, include_str!("limits.sql"))];
+/// Versión de `schema.sql` sin migraciones.
+const BASE_VERSION: i64 = 10;
 
 /// Caché de páginas pequeña: el agente debe quedarse por debajo de 20 MB en reposo.
 const CACHE_KIB: i64 = 512;
@@ -619,6 +625,90 @@ impl Database {
         .await
     }
 
+    /// Límites guardados del servicio y cuándo se guardaron; `None` si no tiene.
+    pub async fn limits(&self, id: ServiceId) -> Result<Option<(ResourceLimits, i64)>, DbError> {
+        self.call(move |connection| {
+            connection
+                .query_row(
+                    "SELECT cpu_percent, priority, memory_max, swap_max, tasks_max, updated_at \
+                     FROM service_limits WHERE service_id = ?1",
+                    [id.0],
+                    |row| {
+                        Ok((
+                            row.get::<_, Option<u32>>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<i64>>(2)?,
+                            row.get::<_, Option<i64>>(3)?,
+                            row.get::<_, Option<u32>>(4)?,
+                            row.get::<_, i64>(5)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .map(
+                    |(cpu_percent, priority, memory_max, swap_max, tasks_max, updated_at)| {
+                        let priority = match priority.as_str() {
+                            "low" => Priority::Low,
+                            "normal" => Priority::Normal,
+                            "high" => Priority::High,
+                            other => return Err(DbError::Corrupt(format!("prioridad «{other}»"))),
+                        };
+                        let bytes = |value: Option<i64>| {
+                            value
+                                .map(u64::try_from)
+                                .transpose()
+                                .map_err(|_| DbError::Corrupt("límite de memoria negativo".into()))
+                        };
+                        let (memory_max, swap_max) = (bytes(memory_max)?, bytes(swap_max)?);
+                        Ok((
+                            ResourceLimits {
+                                cpu_percent,
+                                priority,
+                                memory_max_bytes: memory_max,
+                                swap_max_bytes: swap_max,
+                                tasks_max,
+                            },
+                            updated_at,
+                        ))
+                    },
+                )
+                .transpose()
+        })
+        .await
+    }
+
+    /// Guarda los límites (ya validados) y devuelve cuándo.
+    pub async fn set_limits(&self, id: ServiceId, limits: ResourceLimits) -> Result<i64, DbError> {
+        self.call(move |connection| {
+            let updated_at = now();
+            let priority = match limits.priority {
+                Priority::Low => "low",
+                Priority::Normal => "normal",
+                Priority::High => "high",
+            };
+            // SQLite guarda enteros con signo; los límites validados caben de sobra.
+            let bytes = |value: Option<u64>| value.map(|value| i64::try_from(value).unwrap_or(i64::MAX));
+            connection.execute(
+                "INSERT INTO service_limits \
+                     (service_id, cpu_percent, priority, memory_max, swap_max, tasks_max, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+                 ON CONFLICT (service_id) DO UPDATE SET cpu_percent = ?2, priority = ?3, \
+                     memory_max = ?4, swap_max = ?5, tasks_max = ?6, updated_at = ?7",
+                params![
+                    id.0,
+                    limits.cpu_percent,
+                    priority,
+                    bytes(limits.memory_max_bytes),
+                    bytes(limits.swap_max_bytes),
+                    limits.tasks_max,
+                    updated_at
+                ],
+            )?;
+            Ok(updated_at)
+        })
+        .await
+    }
+
     /// Marca si el servicio debe estar en marcha (ver `autostart` en schema.sql).
     pub async fn set_autostart(&self, slug: ServiceSlug, enabled: bool) -> Result<(), DbError> {
         self.call(move |connection| {
@@ -767,11 +857,28 @@ fn ensure_schema(connection: &mut Connection) -> Result<(), DbError> {
             }
             let transaction = connection.transaction()?;
             transaction.execute_batch(SCHEMA)?;
+            for (_, migration) in MIGRATIONS {
+                transaction.execute_batch(migration)?;
+            }
             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             transaction.commit()?;
             tracing::info!(
                 version = SCHEMA_VERSION,
                 "esquema de la base de datos creado"
+            );
+            Ok(())
+        }
+        found if (BASE_VERSION..SCHEMA_VERSION).contains(&found) => {
+            let transaction = connection.transaction()?;
+            for (_, migration) in MIGRATIONS.iter().filter(|(from, _)| *from >= found) {
+                transaction.execute_batch(migration)?;
+            }
+            transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            transaction.commit()?;
+            tracing::info!(
+                from = found,
+                to = SCHEMA_VERSION,
+                "esquema de la base de datos actualizado"
             );
             Ok(())
         }
@@ -1198,6 +1305,75 @@ mod tests {
         let error = Database::open(&path).unwrap_err();
         assert!(matches!(error, DbError::SchemaMismatch { .. }), "{error:?}");
         assert!(error.is_configuration());
+    }
+
+    /// Una base de datos de la versión 10 (sin límites) se actualiza sin perder nada.
+    #[tokio::test]
+    async fn migra_desde_la_version_anterior() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agent.db");
+        let db = Database::open(&path).unwrap();
+        let service = db
+            .insert_service(
+                ServiceSlug::new("api").unwrap(),
+                ServiceName::new("API").unwrap(),
+                ServiceDescription::default(),
+            )
+            .await
+            .unwrap();
+        drop(db);
+        // Como la dejaba la versión 10.
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch("DROP TABLE service_limits")
+            .unwrap();
+        connection.pragma_update(None, "user_version", 10).unwrap();
+        drop(connection);
+
+        let db = Database::open(&path).unwrap();
+        assert_eq!(db.services().await.unwrap().len(), 1);
+        assert_eq!(db.limits(service.id).await.unwrap(), None);
+        db.set_limits(service.id, ResourceLimits::default())
+            .await
+            .unwrap();
+        let version: i64 = Connection::open(&path)
+            .unwrap()
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[tokio::test]
+    async fn limites_del_servicio() {
+        let db = Database::open_in_memory().unwrap();
+        let service = db
+            .insert_service(
+                ServiceSlug::new("api").unwrap(),
+                ServiceName::new("API").unwrap(),
+                ServiceDescription::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(db.limits(service.id).await.unwrap(), None);
+        let limits = ResourceLimits {
+            cpu_percent: Some(150),
+            priority: Priority::High,
+            memory_max_bytes: Some(512 * 1024 * 1024),
+            swap_max_bytes: Some(0),
+            tasks_max: None,
+        };
+        db.set_limits(service.id, limits).await.unwrap();
+        assert_eq!(db.limits(service.id).await.unwrap().unwrap().0, limits);
+        // Se sustituyen y se borran con el servicio.
+        db.set_limits(service.id, ResourceLimits::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            db.limits(service.id).await.unwrap().unwrap().0,
+            ResourceLimits::default()
+        );
+        db.delete_service(service.id).await.unwrap();
+        assert_eq!(db.limits(service.id).await.unwrap(), None);
     }
 
     #[test]

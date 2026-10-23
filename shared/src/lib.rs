@@ -6,6 +6,8 @@
 mod deployment;
 mod env;
 mod error;
+mod host;
+mod limits;
 mod logs;
 mod services;
 mod site;
@@ -16,6 +18,11 @@ pub use deployment::{
 };
 pub use env::{EnvVariable, GlobalEnvironment, ServiceEnvironment, UpdateEnvironment};
 pub use error::{ApiErrorBody, ErrorCode};
+pub use host::{
+    CpuInfo, DiskInfo, DiskKind, GpuInfo, HOST_PATH, HostInfo, MemoryInfo, NetworkInterface,
+    OperatingSystem,
+};
+pub use limits::{Priority, ResourceLimits, ServiceLimits};
 pub use logs::{LOG_BACKLOG_LINES, LogEndReason, LogEntry, LogEvent};
 pub use services::{
     ActiveState, HostCapacity, LoadState, ProcessMetrics, RegisterService, SERVICES_PATH,

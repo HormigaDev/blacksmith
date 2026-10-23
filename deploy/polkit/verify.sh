@@ -22,6 +22,8 @@ created_user=no
 
 cleanup() {
     systemctl stop "$MANAGED" "$DEPLOY" "$CERT" "$FOREIGN" 2>/dev/null || true
+    # Quita los drop-ins de set-property (/etc/systemd/system.control/).
+    systemctl revert "$MANAGED" "$DEPLOY" "$FOREIGN" >/dev/null 2>&1 || true
     rm -f "$UNITS/$MANAGED" "$UNITS/$DEPLOY" "$UNITS/$CERT" "$UNITS/$FOREIGN"
     systemctl daemon-reload
     systemctl reset-failed "$MANAGED" "$DEPLOY" "$CERT" "$FOREIGN" 2>/dev/null || true
@@ -40,17 +42,19 @@ done
 systemctl daemon-reload
 
 failures=0
-# expect <permitido|denegado> <verbo> <unidad>
+# expect <permitido|denegado> <verbo> <unidad> [propiedad…]
 expect() {
-    if output=$(runuser -u blacksmith -- env LC_ALL=C systemctl --no-ask-password "$2" -- "$3" 2>&1); then
+    wanted=$1 verb=$2 unit=$3
+    shift 3
+    if output=$(runuser -u blacksmith -- env LC_ALL=C systemctl --no-ask-password "$verb" -- "$unit" "$@" 2>&1); then
         got=permitido
     else
         got=denegado
     fi
-    if [ "$got" = "$1" ]; then
-        printf 'ok     %-9s %-8s %s\n' "$1" "$2" "$3"
+    if [ "$got" = "$wanted" ]; then
+        printf 'ok     %-9s %-12s %s\n' "$wanted" "$verb" "$unit"
     else
-        printf 'FALLA  %-9s %-8s %s (obtenido: %s)\n       %s\n' "$1" "$2" "$3" "$got" "$output"
+        printf 'FALLA  %-9s %-12s %s (obtenido: %s)\n       %s\n' "$wanted" "$verb" "$unit" "$got" "$output"
         failures=$((failures + 1))
     fi
 }
@@ -61,6 +65,12 @@ expect permitido stop "$MANAGED"
 expect permitido start "$DEPLOY"
 expect permitido stop "$DEPLOY"
 expect denegado restart "$DEPLOY"
+# Límites de recursos: solo de los servicios, nunca de sus despliegues ni de otras unidades.
+expect permitido set-property "$MANAGED" MemoryMax=268435456 CPUQuota=50%
+expect permitido set-property "$MANAGED" MemoryMax=infinity CPUQuota=
+expect denegado set-property "$DEPLOY" MemoryMax=268435456
+expect denegado set-property "$FOREIGN" MemoryMax=268435456
+expect denegado set-property blacksmith.service MemoryMax=infinity
 expect denegado enable "$MANAGED"
 expect denegado mask "$MANAGED"
 expect denegado start "$FOREIGN"

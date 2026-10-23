@@ -29,8 +29,9 @@ use axum::{
 use http_body_util::BodyExt;
 use serde::de::DeserializeOwned;
 use shared::{
-    ActiveState, ApiErrorBody, ErrorCode, GlobalEnvironment, LoadState, ServiceActionReport,
-    ServiceDeployment, ServiceEnvironment, ServiceOutcome, ServiceStatusReport, ServiceSummary,
+    ActiveState, ApiErrorBody, ErrorCode, GlobalEnvironment, HostInfo, LoadState, Priority,
+    ResourceLimits, ServiceActionReport, ServiceDeployment, ServiceEnvironment, ServiceLimits,
+    ServiceOutcome, ServiceStatusReport, ServiceSummary,
 };
 use tower::ServiceExt;
 
@@ -38,6 +39,17 @@ use tower::ServiceExt;
 /// `MainPID=$PPID`: el proceso del test, que está vivo y se puede medir de verdad.
 const FAKE: &str = r#"#!/bin/sh
 for unit; do :; done
+# set-property: la unidad va tras `--` ($5) y después, las propiedades.
+if [ "$3" = set-property ]; then
+    unit=$5; shift 5
+    echo "set-property $unit $*" >> "__LOG__"
+    case "$unit" in
+        blacksmith@api.service|blacksmith@parado.service) exit 0 ;;
+        blacksmith@sin-permiso.service)
+            echo "Failed to set unit properties on blacksmith@sin-permiso.service: Access denied" >&2; exit 1 ;;
+    esac
+    echo "inesperado: set-property $unit" >&2; exit 99
+fi
 echo "$3 $unit" >> "__LOG__"
 # Como systemd con la plantilla `blacksmith@.service` instalada (salvo en la unidad inexistente).
 if [ "$3" = show ] && [ "$5" = EnvironmentFiles ]; then
@@ -674,6 +686,117 @@ async fn json<T: DeserializeOwned>(
         String::from_utf8_lossy(&bytes)
     );
     serde_json::from_slice(&bytes).unwrap()
+}
+
+#[tokio::test]
+async fn limites_de_recursos() {
+    let router = app().await;
+    let uri = "/api/v1/services/api/limits";
+    let initial: ServiceLimits = json(&router, Method::GET, uri, None, StatusCode::OK).await;
+    assert_eq!(initial.limits, ResourceLimits::default());
+    assert_eq!(initial.updated_at, None);
+    assert!(initial.host.cpu_cores >= 1 && initial.host.memory_bytes > 0);
+
+    let wanted = serde_json::json!({
+        "cpuPercent": 50,
+        "priority": "high",
+        "memoryMaxBytes": 64 * 1024 * 1024,
+        "swapMaxBytes": 0,
+        "tasksMax": 64
+    });
+    let saved: ServiceLimits = json(&router, Method::PUT, uri, Some(wanted), StatusCode::OK).await;
+    let limits = ResourceLimits {
+        cpu_percent: Some(50),
+        priority: Priority::High,
+        memory_max_bytes: Some(64 * 1024 * 1024),
+        swap_max_bytes: Some(0),
+        tasks_max: Some(64),
+    };
+    assert_eq!(saved.limits, limits);
+    assert!(saved.updated_at.is_some());
+    // Todas las propiedades a la vez, tras la unidad.
+    assert!(
+        invocations().contains(
+            "set-property blacksmith@api.service CPUQuota=50% CPUWeight=400 IOWeight=400 \
+             MemoryMax=67108864 MemorySwapMax=0 TasksMax=64"
+        ),
+        "{}",
+        invocations()
+    );
+    let read: ServiceLimits = json(&router, Method::GET, uri, None, StatusCode::OK).await;
+    assert_eq!(read.limits, limits);
+
+    // Fuera de rango: no llega a systemd ni se guarda.
+    for body in [
+        serde_json::json!({ "cpuPercent": 0, "memoryMaxBytes": null, "swapMaxBytes": null, "tasksMax": null }),
+        serde_json::json!({ "cpuPercent": null, "memoryMaxBytes": 1024, "swapMaxBytes": null, "tasksMax": null }),
+        serde_json::json!({ "cpuPercent": null, "memoryMaxBytes": null, "swapMaxBytes": null, "tasksMax": 1 }),
+    ] {
+        let error: ApiErrorBody = json(
+            &router,
+            Method::PUT,
+            uri,
+            Some(body),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        assert_eq!(error.code, ErrorCode::InvalidLimits);
+    }
+    let read: ServiceLimits = json(&router, Method::GET, uri, None, StatusCode::OK).await;
+    assert_eq!(read.limits, limits);
+
+    // Si systemd los rechaza, no se guardan.
+    let error: ApiErrorBody = json(
+        &router,
+        Method::PUT,
+        "/api/v1/services/sin-permiso/limits",
+        Some(serde_json::json!({ "cpuPercent": 50, "memoryMaxBytes": null, "swapMaxBytes": null, "tasksMax": null })),
+        StatusCode::INTERNAL_SERVER_ERROR,
+    )
+    .await;
+    assert_eq!(error.code, ErrorCode::SystemdPermissionDenied);
+    let unsaved: ServiceLimits = json(
+        &router,
+        Method::GET,
+        "/api/v1/services/sin-permiso/limits",
+        None,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(unsaved.updated_at, None);
+}
+
+/// Al dar de baja un servicio con límites, se quitan de su unidad: otro que se registre con el
+/// mismo nombre no los hereda.
+#[tokio::test]
+async fn la_baja_quita_los_limites() {
+    let router = app().await;
+    let _: ServiceLimits = json(
+        &router,
+        Method::PUT,
+        "/api/v1/services/parado/limits",
+        Some(serde_json::json!({ "cpuPercent": 25, "memoryMaxBytes": null, "swapMaxBytes": null, "tasksMax": null })),
+        StatusCode::OK,
+    )
+    .await;
+    let (status, _) = call(&router, Method::DELETE, "/api/v1/services/parado", None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(
+        invocations().contains(
+            "set-property blacksmith@parado.service CPUQuota= CPUWeight=100 IOWeight=100 \
+             MemoryMax=infinity MemorySwapMax=infinity TasksMax=infinity"
+        ),
+        "{}",
+        invocations()
+    );
+}
+
+#[tokio::test]
+async fn datos_del_servidor() {
+    let host: HostInfo = ok(Method::GET, "/api/v1/host").await;
+    assert!(host.cpu.logical_cores >= 1);
+    assert!(host.memory.total_bytes > 0);
+    assert!(!host.agent_version.is_empty());
 }
 
 #[tokio::test]

@@ -2,8 +2,8 @@ import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 
-import { mockTauri } from '../../../tests/tauri';
-import AddServerForm from './AddServerForm.svelte';
+import { mockTauri } from '../../../../tests/tauri';
+import AddServerForm from '../AddServerForm.svelte';
 
 const PEM = '-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----';
 const SERVER = {

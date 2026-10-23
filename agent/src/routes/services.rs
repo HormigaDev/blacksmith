@@ -5,9 +5,9 @@
 
 use axum::{extract::State, http::StatusCode};
 use shared::{
-    DeployKey, DeployRun, GitHubAccess, GlobalEnvironment, RegisterService, ServiceActionReport,
-    ServiceDeployment, ServiceEnvironment, ServiceStatusReport, ServiceSummary, SetGitHubAccess,
-    Site, SiteConfig, UpdateDeployment, UpdateEnvironment,
+    DeployKey, DeployRun, GitHubAccess, GlobalEnvironment, RegisterService, ResourceLimits,
+    ServiceActionReport, ServiceDeployment, ServiceEnvironment, ServiceLimits, ServiceStatusReport,
+    ServiceSummary, SetGitHubAccess, Site, SiteConfig, UpdateDeployment, UpdateEnvironment,
 };
 
 use crate::{
@@ -63,6 +63,25 @@ pub async fn set_global_environment(
             .services
             .set_global_environment(update.variables)
             .await?,
+    ))
+}
+
+/// `GET /api/v1/services/{name}/limits`: límites de recursos (sin límites si nunca se pusieron).
+pub async fn limits(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> AppResult<Json<ServiceLimits>> {
+    Ok(Json(state.services.limits(&slug(&name)?).await?))
+}
+
+/// `PUT /api/v1/services/{name}/limits`: los aplica al momento (sin reiniciar) y los guarda.
+pub async fn set_limits(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(limits): Json<ResourceLimits>,
+) -> AppResult<Json<ServiceLimits>> {
+    Ok(Json(
+        state.services.set_limits(&slug(&name)?, limits).await?,
     ))
 }
 

@@ -2,10 +2,11 @@
  * Estado de los servicios de cada servidor, compartido por toda la interfaz: una sola copia por
  * servidor y por servicio, así cualquier pantalla ve al momento lo que otra cambió.
  *
- * - `serviceStore.server(id)`: la lista de servicios del servidor, sus variables globales y la
- *   cuenta de GitHub con la que descarga repositorios privados.
+ * - `serviceStore.server(id)`: la lista de servicios del servidor, sus variables globales, la
+ *   cuenta de GitHub con la que descarga repositorios privados y los datos del servidor
+ *   (sistema, hardware y uso).
  * - `serviceStore.service(id, nombre)`: estado, despliegue, variables, llave de despliegue (si
- *   el servicio la usa), sitio de nginx y despliegues.
+ *   el servicio la usa), sitio de nginx, límites de recursos y despliegues.
  *
  * Las cargas guardan su error en el propio objeto (para mostrarlo donde corresponda); las acciones
  * lanzan, para que el formulario que las pidió muestre el motivo.
@@ -24,21 +25,27 @@ import {
     githubAccess,
     type GlobalEnvironment,
     globalEnvironment,
+    type HostInfo,
+    hostInfo,
     listServices,
     type RegisterService,
     registerService,
     removeServiceSite,
+    type ResourceLimits,
     retryCertificate,
     saveServiceSite,
     saveGlobalEnvironment,
     saveServiceDeployment,
     saveServiceEnvironment,
+    saveServiceLimits,
     type ServiceAction,
     serviceAction,
     type ServiceDeployment,
     serviceDeployment,
     type ServiceEnvironment,
     serviceEnvironment,
+    type ServiceLimits,
+    serviceLimits,
     type ServiceStatus,
     serviceSite,
     serviceStatus,
@@ -66,6 +73,9 @@ export class ServerServices {
     global = $state<GlobalEnvironment | null>(null);
     /** Cuenta de GitHub del servidor: `undefined` sin cargar; `null` si no tiene. */
     github = $state<GitHubAccess | null | undefined>(undefined);
+    /** Sistema, hardware y uso del servidor: `null` hasta la primera carga. */
+    host = $state<HostInfo | null>(null);
+    hostError = $state<string | null>(null);
 
     constructor(serverId: string) {
         this.serverId = serverId;
@@ -98,6 +108,16 @@ export class ServerServices {
         await unregisterService(this.client, name);
         this.list = (this.list ?? []).filter((service) => service.name !== name);
         serviceStore.drop(this.serverId, name);
+    }
+
+    /** Datos del servidor. Un fallo puntual conserva los últimos conocidos. */
+    async loadHost(): Promise<void> {
+        try {
+            this.host = await hostInfo(this.client);
+            this.hostError = null;
+        } catch (error) {
+            this.hostError = describeError(error);
+        }
     }
 
     async loadGlobal(): Promise<void> {
@@ -138,6 +158,8 @@ export class ServiceEntry {
     history = $state.raw<readonly ResourceSample[]>([]);
     /** Sitio de nginx: `undefined` sin cargar; `null` si no tiene. */
     site = $state<Site | null | undefined>(undefined);
+    /** Límites de recursos: `null` hasta cargarlos. */
+    limits = $state<ServiceLimits | null>(null);
     /** Error de la última carga (despliegue o variables). */
     error = $state<string | null>(null);
 
@@ -249,6 +271,16 @@ export class ServiceEntry {
 
     async retryCertificate(): Promise<void> {
         this.site = await retryCertificate(this.client, this.name);
+    }
+
+    async loadLimits(): Promise<void> {
+        this.limits = await serviceLimits(this.client, this.name);
+    }
+
+    /** Los aplica al momento; el estado refleja los nuevos límites en la siguiente lectura. */
+    async saveLimits(limits: ResourceLimits): Promise<void> {
+        this.limits = await saveServiceLimits(this.client, this.name, limits);
+        await this.refresh();
     }
 
     async loadKey(): Promise<void> {

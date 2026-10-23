@@ -1,7 +1,8 @@
 -- Esquema de la base de datos del agente (versión en `SCHEMA_VERSION`, db/mod.rs).
 --
--- Sin migraciones por ahora: si cambia el esquema, se sube la versión y la base de datos se
--- crea de nuevo. El agente se niega a arrancar con una versión distinta a la suya.
+-- Una base de datos nueva se crea con este archivo y los de `MIGRATIONS` (db/mod.rs). Una de
+-- una versión anterior se actualiza con las migraciones que le falten, si las hay; si no, el
+-- agente se niega a arrancar.
 --
 -- Tablas STRICT: SQLite rechaza valores de otro tipo en lugar de convertirlos.
 

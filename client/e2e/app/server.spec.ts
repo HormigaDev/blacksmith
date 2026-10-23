@@ -65,6 +65,9 @@ test.describe('Servicios del servidor', () => {
             memoryBytes: null,
             memoryPeakBytes: null,
             memoryLimitBytes: null,
+            swapLimitBytes: null,
+            cpuLimitPercent: null,
+            tasksLimit: null,
             swapBytes: null,
             cpuPercent: null,
             tasks: null,
@@ -92,6 +95,38 @@ test.describe('Servicios del servidor', () => {
         variables: [{ key: 'PORT', value: '8080' }],
     };
     const GLOBAL = { file: '/etc/blacksmith/env/global.env', variables: [{ key: 'PORT', value: '80' }] };
+    const GIB = 1024 ** 3;
+    const HOST = {
+        hostname: 'vps-1',
+        os: { name: 'Ubuntu 24.04.1 LTS', id: 'ubuntu', kernel: '6.8.0-45-generic', architecture: 'x86_64' },
+        machine: 'Hetzner vServer',
+        virtualization: 'kvm',
+        cpu: { model: 'AMD EPYC-Rome Processor', vendor: null, physicalCores: 2, logicalCores: 2, frequencyMhz: null },
+        gpus: [],
+        memory: { totalBytes: 4 * GIB, availableBytes: 3 * GIB, swapTotalBytes: GIB, swapFreeBytes: GIB },
+        disks: [
+            {
+                mountPoint: '/',
+                device: '/dev/sda1',
+                fileSystem: 'ext4',
+                kind: 'ssd',
+                totalBytes: 80 * GIB,
+                availableBytes: 60 * GIB,
+                readOnly: false,
+            },
+        ],
+        network: [{ name: 'eth0', addresses: ['203.0.113.7/32'], receivedBytes: GIB, transmittedBytes: GIB }],
+        uptimeSecs: 86400,
+        bootTime: 1_790_000_000,
+        loadAverage: [0.2, 0.1, 0.05],
+        timezone: 'Europe/Madrid',
+        agentVersion: '1.0.0',
+    };
+    const LIMITS = {
+        limits: { cpuPercent: null, priority: 'normal', memoryMaxBytes: null, swapMaxBytes: null, tasksMax: null },
+        host: { cpuCores: 2, memoryBytes: 4 * GIB, swapBytes: GIB },
+        updatedAt: null,
+    };
 
     test('servicio: controles, pestañas de logs, despliegue y variables', async ({ page }) => {
         await mockTauri(page, {
@@ -107,6 +142,8 @@ test.describe('Servicios del servidor', () => {
                     'GET /api/v1/services/api/site': agentJson(null),
                     'GET /api/v1/services/api/deploys': agentJson([]),
                     'GET /api/v1/env': agentJson(GLOBAL),
+                    'GET /api/v1/host': agentJson(HOST),
+                    'GET /api/v1/services/api/limits': agentJson(LIMITS),
                 },
             },
             logs_follow: 1,
@@ -122,6 +159,12 @@ test.describe('Servicios del servidor', () => {
         );
         await page.getByRole('main').getByRole('link', { name: 'localhost:4040' }).click();
         await expect(page.getByRole('link', { name: 'API de pagos' })).toBeVisible();
+        // Datos del servidor, debajo de sus servicios.
+        const host = page.getByRole('region', { name: 'Servidor', exact: true });
+        await expect(host.getByText('Ubuntu 24.04.1 LTS')).toBeVisible();
+        await expect(host.getByText('Virtual · KVM')).toBeVisible();
+        await expect(host.getByRole('meter', { name: 'Espacio usado en /' })).toBeVisible();
+        await page.screenshot({ path: test.info().outputPath('servidor-datos.png'), fullPage: true });
         await page.getByRole('button', { name: 'Registrar servicio' }).click();
         await expect(page.getByRole('dialog', { name: 'Registrar servicio' })).toBeVisible();
         await page.keyboard.press('Escape');
@@ -163,6 +206,13 @@ test.describe('Servicios del servidor', () => {
         await expect(page.getByRole('button', { name: 'Tipo de proyecto' })).toHaveText(/Aplicación web/);
         await expect(page.getByRole('switch', { name: /HTTPS/ })).toBeChecked();
         await page.screenshot({ path: test.info().outputPath('web.png'), fullPage: true });
+
+        // Recursos: sin límites; el formulario los ofrece con la capacidad del servidor.
+        await tabs.getByRole('link', { name: 'Recursos' }).click();
+        await expect(page).toHaveURL(/\/services\/api\/limits$/);
+        await expect(page.getByRole('spinbutton', { name: 'CPU máxima' })).toHaveValue('');
+        await expect(page.getByText(/Este servidor tiene 2 núcleos \(hasta 200 %\)/)).toBeVisible();
+        await page.screenshot({ path: test.info().outputPath('recursos.png'), fullPage: true });
 
         await tabs.getByRole('link', { name: 'Variables' }).click();
         await expect(page.getByRole('textbox', { name: /^Clave/ })).toHaveValue('PORT');

@@ -211,9 +211,14 @@ export interface ServiceResources {
     memoryPeakBytes: number | null;
     memoryLimitBytes: number | null;
     swapBytes: number | null;
+    /** Límite de swap; 0 = sin swap. */
+    swapLimitBytes: number | null;
     /** 100 = un núcleo completo. */
     cpuPercent: number | null;
+    /** Límite de CPU, en la misma escala. */
+    cpuLimitPercent: number | null;
     tasks: number | null;
+    tasksLimit: number | null;
     restarts: number | null;
     uptimeSecs: number | null;
 }
@@ -235,12 +240,14 @@ const RESOURCE_KEYS = [
     'restarts',
     'uptimeSecs',
 ] as const;
+/** Los límites aplicados: un agente anterior no los envía. */
+const LIMIT_KEYS = ['swapLimitBytes', 'cpuLimitPercent', 'tasksLimit'] as const;
 
 function parseResources(data: unknown): ServiceResources {
     if (!isRecord(data)) fail('consumo');
-    const resources = {} as Record<(typeof RESOURCE_KEYS)[number], number | null>;
-    for (const key of RESOURCE_KEYS) {
-        const value = data[key];
+    const resources = {} as Record<(typeof RESOURCE_KEYS)[number] | (typeof LIMIT_KEYS)[number], number | null>;
+    for (const key of [...RESOURCE_KEYS, ...LIMIT_KEYS]) {
+        const value = LIMIT_KEYS.some((optional) => optional === key) ? (data[key] ?? null) : data[key];
         if (!(value === null || typeof value === 'number')) fail('consumo');
         resources[key] = value;
     }
@@ -499,4 +506,203 @@ export function parseDeployRun(data: unknown): DeployRun {
 export function parseDeployRuns(data: unknown): DeployRun[] {
     if (!Array.isArray(data)) fail('despliegues');
     return data.map(parseDeployRun);
+}
+
+/** `shared::Priority`: reparto de CPU y disco frente a los demás servicios. */
+export const PRIORITIES = ['low', 'normal', 'high'] as const;
+export type Priority = (typeof PRIORITIES)[number];
+
+/** `shared::ResourceLimits`. `null` = sin límite. */
+export interface ResourceLimits {
+    /** 100 = un núcleo completo. */
+    cpuPercent: number | null;
+    priority: Priority;
+    memoryMaxBytes: number | null;
+    /** 0 = sin swap. */
+    swapMaxBytes: number | null;
+    tasksMax: number | null;
+}
+
+/** `shared::ServiceLimits`. */
+export interface ServiceLimits {
+    limits: ResourceLimits;
+    host: HostCapacity;
+    /** `null` si nunca se configuraron. */
+    updatedAt: number | null;
+}
+
+/** Mínimos del agente (`limits.rs`). */
+export const MIN_MEMORY_BYTES = 32 * 1024 * 1024;
+export const MIN_TASKS = 16;
+export const MAX_TASKS = 4_194_304;
+
+const isNullableNumber = (value: unknown): value is number | null => value === null || typeof value === 'number';
+
+export function parseServiceLimits(data: unknown): ServiceLimits {
+    if (!isRecord(data)) fail('límites');
+    const limits = data.limits;
+    if (!isRecord(limits)) fail('límites');
+    const { cpuPercent, memoryMaxBytes, swapMaxBytes, tasksMax } = limits;
+    const priority = PRIORITIES.find((known) => known === limits.priority);
+    const { updatedAt } = data;
+    if (
+        !priority ||
+        !isNullableNumber(cpuPercent) ||
+        !isNullableNumber(memoryMaxBytes) ||
+        !isNullableNumber(swapMaxBytes) ||
+        !isNullableNumber(tasksMax) ||
+        !isNullableNumber(updatedAt)
+    ) {
+        fail('límites');
+    }
+    return {
+        limits: { cpuPercent, priority, memoryMaxBytes, swapMaxBytes, tasksMax },
+        host: parseHost(data.host),
+        updatedAt,
+    };
+}
+
+/** `shared::HostInfo`: sistema, hardware y uso del servidor. */
+export interface HostInfo {
+    hostname: string | null;
+    os: { name: string | null; id: string; kernel: string | null; architecture: string };
+    machine: string | null;
+    virtualization: string | null;
+    cpu: {
+        model: string | null;
+        vendor: string | null;
+        physicalCores: number | null;
+        logicalCores: number;
+        frequencyMhz: number | null;
+    };
+    gpus: GpuInfo[];
+    memory: { totalBytes: number; availableBytes: number; swapTotalBytes: number; swapFreeBytes: number };
+    disks: DiskInfo[];
+    network: NetworkInterface[];
+    uptimeSecs: number;
+    /** Segundos Unix. */
+    bootTime: number;
+    loadAverage: [number, number, number];
+    timezone: string | null;
+    agentVersion: string;
+}
+
+export interface GpuInfo {
+    name: string;
+    vendor: string | null;
+    driver: string | null;
+    memoryBytes: number | null;
+    address: string;
+}
+
+export const DISK_KINDS = ['ssd', 'hdd', 'unknown'] as const;
+
+export interface DiskInfo {
+    mountPoint: string;
+    device: string;
+    fileSystem: string;
+    kind: (typeof DISK_KINDS)[number];
+    totalBytes: number;
+    availableBytes: number;
+    readOnly: boolean;
+}
+
+export interface NetworkInterface {
+    name: string;
+    addresses: string[];
+    receivedBytes: number;
+    transmittedBytes: number;
+}
+
+const isNullableString = (value: unknown): value is string | null => value === null || typeof value === 'string';
+
+const isGpu = (value: unknown): value is GpuInfo =>
+    isRecord(value) &&
+    typeof value.name === 'string' &&
+    isNullableString(value.vendor) &&
+    isNullableString(value.driver) &&
+    isNullableNumber(value.memoryBytes) &&
+    typeof value.address === 'string';
+
+const isDisk = (value: unknown): value is DiskInfo =>
+    isRecord(value) &&
+    typeof value.mountPoint === 'string' &&
+    typeof value.device === 'string' &&
+    typeof value.fileSystem === 'string' &&
+    DISK_KINDS.some((kind) => kind === value.kind) &&
+    typeof value.totalBytes === 'number' &&
+    typeof value.availableBytes === 'number' &&
+    typeof value.readOnly === 'boolean';
+
+const isInterface = (value: unknown): value is NetworkInterface =>
+    isRecord(value) &&
+    typeof value.name === 'string' &&
+    Array.isArray(value.addresses) &&
+    value.addresses.every(isString) &&
+    typeof value.receivedBytes === 'number' &&
+    typeof value.transmittedBytes === 'number';
+
+export function parseHostInfo(data: unknown): HostInfo {
+    if (!isRecord(data) || !isRecord(data.os) || !isRecord(data.cpu) || !isRecord(data.memory)) fail('servidor');
+    const { os, cpu, memory, gpus, disks, network, loadAverage } = data;
+    if (
+        !isNullableString(data.hostname) ||
+        !isNullableString(os.name) ||
+        typeof os.id !== 'string' ||
+        !isNullableString(os.kernel) ||
+        typeof os.architecture !== 'string' ||
+        !isNullableString(data.machine) ||
+        !isNullableString(data.virtualization) ||
+        !isNullableString(cpu.model) ||
+        !isNullableString(cpu.vendor) ||
+        !isNullableNumber(cpu.physicalCores) ||
+        typeof cpu.logicalCores !== 'number' ||
+        !isNullableNumber(cpu.frequencyMhz) ||
+        !Array.isArray(gpus) ||
+        !gpus.every(isGpu) ||
+        typeof memory.totalBytes !== 'number' ||
+        typeof memory.availableBytes !== 'number' ||
+        typeof memory.swapTotalBytes !== 'number' ||
+        typeof memory.swapFreeBytes !== 'number' ||
+        !Array.isArray(disks) ||
+        !disks.every(isDisk) ||
+        !Array.isArray(network) ||
+        !network.every(isInterface) ||
+        typeof data.uptimeSecs !== 'number' ||
+        typeof data.bootTime !== 'number' ||
+        !Array.isArray(loadAverage) ||
+        loadAverage.length !== 3 ||
+        !loadAverage.every(isNumber) ||
+        !isNullableString(data.timezone) ||
+        typeof data.agentVersion !== 'string'
+    ) {
+        fail('servidor');
+    }
+    return {
+        hostname: data.hostname,
+        os: { name: os.name, id: os.id, kernel: os.kernel, architecture: os.architecture },
+        machine: data.machine,
+        virtualization: data.virtualization,
+        cpu: {
+            model: cpu.model,
+            vendor: cpu.vendor,
+            physicalCores: cpu.physicalCores,
+            logicalCores: cpu.logicalCores,
+            frequencyMhz: cpu.frequencyMhz,
+        },
+        gpus,
+        memory: {
+            totalBytes: memory.totalBytes,
+            availableBytes: memory.availableBytes,
+            swapTotalBytes: memory.swapTotalBytes,
+            swapFreeBytes: memory.swapFreeBytes,
+        },
+        disks,
+        network,
+        uptimeSecs: data.uptimeSecs,
+        bootTime: data.bootTime,
+        loadAverage: [loadAverage[0], loadAverage[1], loadAverage[2]] as [number, number, number],
+        timezone: data.timezone,
+        agentVersion: data.agentVersion,
+    };
 }

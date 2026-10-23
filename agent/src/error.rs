@@ -283,6 +283,9 @@ fn service_error(error: &ServiceError) -> (StatusCode, ErrorCode, String) {
             ErrorCode::EnvironmentFileInvalid,
             message,
         ),
+        ServiceError::InvalidLimits(_) => {
+            (StatusCode::BAD_REQUEST, ErrorCode::InvalidLimits, message)
+        }
         ServiceError::Metrics(_) | ServiceError::Database(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             ErrorCode::Internal,
