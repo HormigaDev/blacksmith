@@ -39,44 +39,50 @@ use tower::ServiceExt;
 const FAKE: &str = r#"#!/bin/sh
 for unit; do :; done
 echo "$3 $unit" >> "__LOG__"
-# Como systemd con la plantilla `bbel@.service` instalada (salvo en la unidad inexistente).
+# Como systemd con la plantilla `blacksmith@.service` instalada (salvo en la unidad inexistente).
 if [ "$3" = show ] && [ "$5" = EnvironmentFiles ]; then
-    if [ "$unit" != bbel@sin-unidad.service ]; then
-        slug=${unit#bbel@}; slug=${slug%.service}
+    if [ "$unit" != blacksmith@sin-unidad.service ]; then
+        slug=${unit#blacksmith@}; slug=${slug%.service}
         echo "EnvironmentFiles=__ENVDIR__/global.env (ignore_errors=yes)"
         echo "EnvironmentFiles=__ENVDIR__/services/$slug.env (ignore_errors=yes)"
     fi
     exit 0
 fi
 case "$3:$unit" in
-    show:bbel@api.service)
-        echo "MainPID=$PPID"; echo "LoadState=loaded"; echo "ActiveState=active"; echo "SubState=running" ;;
-    show:bbel@parado.service|show:bbel@sin-version.service)
+    show:blacksmith@api.service)
+        echo "MainPID=$PPID"; echo "LoadState=loaded"; echo "ActiveState=active"; echo "SubState=running"
+        echo "MemoryCurrent=52428800"; echo "MemoryPeak=73400320"; echo "MemoryMax=infinity"
+        echo "MemorySwapCurrent=0"; echo "TasksCurrent=7"; echo "NRestarts=1"
+        echo "ActiveEnterTimestampMonotonic=1000000"
+        # CPU: el doble en cada lectura, para que haya consumo entre dos.
+        cpu=$(cat "__DIR__/cpu" 2>/dev/null || echo 1000000000)
+        echo "CPUUsageNSec=$cpu"; echo $((cpu * 2)) > "__DIR__/cpu" ;;
+    show:blacksmith@parado.service|show:blacksmith@sin-version.service)
         echo "MainPID=0"; echo "LoadState=loaded"; echo "ActiveState=inactive"; echo "SubState=dead" ;;
-    show:bbel@sin-unidad.service)
+    show:blacksmith@sin-unidad.service)
         echo "MainPID=0"; echo "LoadState=not-found"; echo "ActiveState=inactive"; echo "SubState=dead" ;;
-    show:bbel@raro.service) echo "MainPID=abc" ;;
-    start:bbel@api.service|stop:bbel@api.service|restart:bbel@api.service) exit 0 ;;
+    show:blacksmith@raro.service) echo "MainPID=abc" ;;
+    start:blacksmith@api.service|stop:blacksmith@api.service|restart:blacksmith@api.service) exit 0 ;;
     # nginx: rechaza mientras exista el archivo de control; certbot siempre emite.
-    start:bbel-nginx.service)
+    start:blacksmith-nginx.service)
         if [ -e "__DIR__/nginx-rechaza" ]; then
-            echo "Job for bbel-nginx.service failed because the control process exited with error code." >&2
+            echo "Job for blacksmith-nginx.service failed because the control process exited with error code." >&2
             exit 1
         fi
         exit 0 ;;
-    start:bbel-certbot@*) exit 0 ;;
-    stop:bbel@sin-version.service) exit 0 ;;
-    start:bbel@falla.service)
-        echo "Job for bbel@falla.service failed because the control process exited with error code." >&2
-        echo "See \"systemctl status bbel@falla.service\" for details." >&2
+    start:blacksmith-certbot@*) exit 0 ;;
+    stop:blacksmith@sin-version.service) exit 0 ;;
+    start:blacksmith@falla.service)
+        echo "Job for blacksmith@falla.service failed because the control process exited with error code." >&2
+        echo "See \"systemctl status blacksmith@falla.service\" for details." >&2
         exit 1 ;;
-    start:bbel@sin-permiso.service)
-        echo "Failed to start bbel@sin-permiso.service: Access denied" >&2; exit 1 ;;
-    start:bbel@sin-unidad.service)
-        echo "Failed to start bbel@sin-unidad.service: Unit bbel@sin-unidad.service not found." >&2; exit 5 ;;
-    start:bbel@lento.service) exec /bin/sleep 30 ;;
-    stop:bbel@agent-permission-check.service)
-        echo "Failed to stop bbel@agent-permission-check.service: Unit bbel@agent-permission-check.service not loaded." >&2
+    start:blacksmith@sin-permiso.service)
+        echo "Failed to start blacksmith@sin-permiso.service: Access denied" >&2; exit 1 ;;
+    start:blacksmith@sin-unidad.service)
+        echo "Failed to start blacksmith@sin-unidad.service: Unit blacksmith@sin-unidad.service not found." >&2; exit 5 ;;
+    start:blacksmith@lento.service) exec /bin/sleep 30 ;;
+    stop:blacksmith@agent-permission-check.service)
+        echo "Failed to stop blacksmith@agent-permission-check.service: Unit blacksmith@agent-permission-check.service not loaded." >&2
         exit 5 ;;
     *) echo "inesperado: $*" >&2; exit 99 ;;
 esac
@@ -212,7 +218,7 @@ async fn fail(method: Method, uri: &str) -> (StatusCode, ApiErrorBody) {
 async fn estado_con_pid_y_metricas() {
     let report: ServiceStatusReport = ok(Method::GET, "/api/v1/services/api/status").await;
     assert_eq!(report.name, "api");
-    assert_eq!(report.unit, "bbel@api.service");
+    assert_eq!(report.unit, "blacksmith@api.service");
     assert_eq!(report.load_state, LoadState::Loaded);
     assert_eq!(report.active_state, ActiveState::Active);
     assert_eq!(report.sub_state, "running");
@@ -221,6 +227,15 @@ async fn estado_con_pid_y_metricas() {
     let metrics = report.metrics.expect("métricas del proceso");
     assert!(metrics.rss_bytes > 0);
     assert!(metrics.cpu_percent >= 0.0);
+    // Consumo del cgroup entero, según systemd.
+    let resources = report.resources;
+    assert_eq!(resources.memory_bytes, Some(52_428_800));
+    assert_eq!(resources.memory_peak_bytes, Some(73_400_320));
+    assert_eq!(resources.memory_limit_bytes, None);
+    assert_eq!((resources.tasks, resources.restarts), (Some(7), Some(1)));
+    assert!(resources.cpu_percent.is_some_and(|cpu| cpu > 0.0));
+    assert!(resources.uptime_secs.is_some());
+    assert!(report.host.cpu_cores >= 1 && report.host.memory_bytes > 0);
 }
 
 #[tokio::test]
@@ -244,8 +259,8 @@ async fn acciones() {
         let report: ServiceActionReport =
             ok(Method::POST, &format!("/api/v1/services/api/{action}")).await;
         assert_eq!(report.outcome, outcome);
-        assert_eq!(report.unit, "bbel@api.service");
-        assert!(invocations().contains(&format!("{action} bbel@api.service")));
+        assert_eq!(report.unit, "blacksmith@api.service");
+        assert!(invocations().contains(&format!("{action} blacksmith@api.service")));
     }
 }
 
@@ -289,7 +304,7 @@ async fn acceso_a_github_sin_devolver_nunca_el_token() {
     assert_eq!(body.as_slice(), b"null");
 }
 
-/// Sitio de nginx de un servicio: se aplica con `bbel-nginx.service`, se restaura si nginx lo
+/// Sitio de nginx de un servicio: se aplica con `blacksmith-nginx.service`, se restaura si nginx lo
 /// rechaza, los dominios no se comparten y HTTPS llega en segundo plano.
 #[tokio::test]
 async fn sitio_de_nginx() {
@@ -327,7 +342,53 @@ async fn sitio_de_nginx() {
         written.contains("proxy_pass http://127.0.0.1:3000;"),
         "{written}"
     );
-    assert!(invocations().contains("start bbel-nginx.service"));
+    assert!(invocations().contains("start blacksmith-nginx.service"));
+
+    // API + frontend + WebSocket en puertos distintos: rutas además de la plantilla.
+    let (status, body) = put(serde_json::json!({
+        "template": "app", "domains": ["api.example.com"], "port": 3000, "https": false, "email": null,
+        "routes": [
+            {"path": "/socket.io/", "port": 3001, "websocket": true},
+            {"path": "/graphql", "port": 3002}
+        ]
+    }))
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let site: shared::Site = serde_json::from_slice(&body).unwrap();
+    assert_eq!(site.config.routes.len(), 2);
+    assert!(site.config.routes[0].websocket && !site.config.routes[1].websocket);
+    let with_routes = fs::read_to_string(&site_file).unwrap();
+    assert!(
+        with_routes.contains("location ^~ /socket.io/ {"),
+        "{with_routes}"
+    );
+    assert!(
+        with_routes.contains("proxy_pass http://127.0.0.1:3001;"),
+        "{with_routes}"
+    );
+    assert!(
+        with_routes.contains("proxy_pass http://127.0.0.1:3002;"),
+        "{with_routes}"
+    );
+    // Una ruta que pisa la raíz de la plantilla, o con caracteres de configuración, no pasa.
+    for bad in [
+        serde_json::json!({"path": "/", "port": 3001}),
+        serde_json::json!({"path": "/api; return 200", "port": 3001}),
+    ] {
+        let (status, body) = put(serde_json::json!({
+            "template": "app", "domains": ["api.example.com"], "port": 3000, "https": false,
+            "email": null, "routes": [bad]
+        }))
+        .await;
+        let error: ApiErrorBody = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            (status, error.code),
+            (StatusCode::BAD_REQUEST, ErrorCode::InvalidSite)
+        );
+    }
+    // Vuelve a la configuración sin rutas para el resto de la prueba.
+    let (status, _) = put(app_site.clone()).await;
+    assert_eq!(status, StatusCode::OK);
 
     // Validación: una plantilla de archivos sin carpeta pública, o un puerto que falta.
     for invalid in [
@@ -389,12 +450,12 @@ async fn sitio_de_nginx() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert_eq!(tls, shared::TlsStatus::Active);
-    assert!(invocations().contains("start bbel-certbot@api.example.com.service"));
+    assert!(invocations().contains("start blacksmith-certbot@api.example.com.service"));
     let certbot_args =
         fs::read_to_string(fake().paths.nginx_certs_dir.join("api.example.com.env")).unwrap();
     assert_eq!(
         certbot_args,
-        "BBEL_CERTBOT_ARGS=-d api.example.com -d www.api.example.com --email ops@example.com\n"
+        "BLACKSMITH_CERTBOT_ARGS=-d api.example.com -d www.api.example.com --email ops@example.com\n"
     );
     let written = fs::read_to_string(&site_file).unwrap();
     assert!(
@@ -429,7 +490,7 @@ async fn sin_version_activa_no_arranca_pero_se_puede_parar() {
         );
     }
     assert!(
-        !invocations().contains("start bbel@sin-version"),
+        !invocations().contains("start blacksmith@sin-version"),
         "{}",
         invocations()
     );
@@ -444,7 +505,7 @@ async fn sin_version_activa_no_arranca_pero_se_puede_parar() {
 
 #[tokio::test]
 async fn un_servicio_no_registrado_no_llega_a_systemd() {
-    // `bbel@ajeno.service` podría existir en systemd: para el cliente no existe.
+    // `blacksmith@ajeno.service` podría existir en systemd: para el cliente no existe.
     let (status, body) = fail(Method::POST, "/api/v1/services/ajeno/start").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body.code, ErrorCode::ServiceNotFound);
@@ -458,7 +519,7 @@ async fn un_servicio_no_registrado_no_llega_a_systemd() {
 
 #[tokio::test]
 async fn nombres_invalidos() {
-    for name in ["API", "-x", "a.b", "a%20b", "bbel@api.service"] {
+    for name in ["API", "-x", "a.b", "a%20b", "blacksmith@api.service"] {
         let (status, body) = fail(Method::POST, &format!("/api/v1/services/{name}/start")).await;
         assert_eq!(
             (status, body.code),
@@ -514,7 +575,8 @@ async fn errores_con_codigo_y_diagnostico() {
     // El diagnóstico de un fallo del trabajo remite al journal de la unidad.
     let (_, body) = fail(Method::POST, "/api/v1/services/falla/start").await;
     assert!(
-        body.message.contains("journalctl -u bbel@falla.service"),
+        body.message
+            .contains("journalctl -u blacksmith@falla.service"),
         "{}",
         body.message
     );
@@ -560,7 +622,7 @@ async fn permisos_autorizados() {
         manager.check_permissions().await,
         PermissionCheck::Authorized
     ));
-    assert!(invocations().contains("stop bbel@agent-permission-check.service"));
+    assert!(invocations().contains("stop blacksmith@agent-permission-check.service"));
 }
 
 #[tokio::test]
@@ -630,7 +692,7 @@ async fn registro_listado_y_baja() {
     )
     .await;
     assert_eq!(created.name, "nuevo");
-    assert_eq!(created.unit, "bbel@nuevo.service");
+    assert_eq!(created.unit, "blacksmith@nuevo.service");
     assert_eq!(created.description, "API de pagos.\nSegunda línea.");
 
     let listed: Vec<ServiceSummary> = json(
@@ -692,7 +754,11 @@ async fn registro_listado_y_baja() {
     .await;
     assert_eq!(missing.code, ErrorCode::ServiceNotFound);
     // Registrar no toca systemd.
-    assert!(!invocations().contains("bbel@nuevo"), "{}", invocations());
+    assert!(
+        !invocations().contains("blacksmith@nuevo"),
+        "{}",
+        invocations()
+    );
 }
 
 #[tokio::test]
@@ -711,7 +777,7 @@ async fn variables_de_entorno() {
         StatusCode::OK,
     )
     .await;
-    assert_eq!(saved.unit, "bbel@api.service");
+    assert_eq!(saved.unit, "blacksmith@api.service");
     assert_eq!(saved.file, file.display().to_string());
     assert!(saved.loaded_by_unit, "el drop-in inyecta el archivo");
     assert!(saved.global_loaded_by_unit, "y el global, antes");
@@ -901,7 +967,7 @@ async fn definicion_del_despliegue() {
     }
     // Guardar no ejecuta nada en systemd.
     assert!(
-        !invocations().contains("start bbel@parado"),
+        !invocations().contains("start blacksmith@parado"),
         "{}",
         invocations()
     );
@@ -954,7 +1020,7 @@ fn git(dir: &Path, args: &[&str]) {
 }
 
 /// Lo mismo que hace el agente en modo local, de punta a punta: plantillas en el systemd del
-/// usuario, cuenta de GitHub del servidor, `bbel-deploy@` clona y prepara, `bbel@` arranca con
+/// usuario, cuenta de GitHub del servidor, `blacksmith-deploy@` clona y prepara, `blacksmith@` arranca con
 /// las variables; un reinicio aplica las nuevas. El repositorio es local (`file://`) en lugar
 /// de GitHub.
 #[tokio::test]
@@ -1093,6 +1159,21 @@ async fn modo_local_de_punta_a_punta() {
     let status = manager.status(&slug).await.unwrap();
     assert_eq!(status.active_state, shared::ActiveState::Active);
     assert!(status.pid.is_some());
+    // Contadores reales del cgroup (contabilidad activada por la plantilla).
+    let resources = status.resources;
+    assert!(
+        resources.memory_bytes.is_some_and(|bytes| bytes > 0),
+        "{resources:?}"
+    );
+    assert!(
+        resources.tasks.is_some_and(|tasks| tasks >= 1),
+        "{resources:?}"
+    );
+    assert!(resources.cpu_percent.is_some(), "{resources:?}");
+    assert!(
+        resources.uptime_secs.is_some_and(|secs| secs < 60),
+        "{resources:?}"
+    );
 
     // Variables nuevas: se aplican al reiniciar, sin redesplegar.
     manager

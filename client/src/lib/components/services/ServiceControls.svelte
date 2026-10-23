@@ -12,7 +12,7 @@
     import SquareIcon from '@lucide/svelte/icons/square';
 
     import type { ServiceAction, ServiceStatus } from '$lib/agent';
-    import { formatBytes, formatNumber, t } from '$lib/i18n';
+    import { formatBytes, formatPercent, t } from '$lib/i18n';
 
     import Badge from '../ui/Badge.svelte';
     import Button from '../ui/Button.svelte';
@@ -54,14 +54,15 @@
         )[status.activeState];
         return { variant, label: t(`services.controls.state.${status.activeState}`) };
     });
-    const metrics = $derived(
-        status?.metrics
-            ? t('services.controls.metrics', {
-                  cpu: `${formatNumber(status.metrics.cpuPercent, { maximumFractionDigits: 1 })} %`,
-                  ram: formatBytes(status.metrics.rssBytes),
-              })
-            : null,
-    );
+    // Mismo origen que el resumen: el servicio entero (su cgroup), no solo el proceso principal.
+    const metrics = $derived.by(() => {
+        const resources = status?.resources;
+        if (!resources || resources.cpuPercent === null || resources.memoryBytes === null) return null;
+        return t('services.controls.metrics', {
+            cpu: formatPercent(resources.cpuPercent / 100),
+            ram: formatBytes(resources.memoryBytes),
+        });
+    });
     const confirmOpen = {
         get value() {
             return confirm !== null;

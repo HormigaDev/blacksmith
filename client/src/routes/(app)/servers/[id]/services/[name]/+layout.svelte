@@ -31,7 +31,8 @@
     const title = $derived(summary?.displayName ?? name);
     const base = $derived(serverId ? serviceHref(serverId, name) : '');
     const tabs = $derived([
-        { href: base, label: t('services.tabs.logs'), current: page.url.pathname === base },
+        { href: base, label: t('services.tabs.overview'), current: page.url.pathname === base },
+        { href: `${base}/logs`, label: t('services.tabs.logs'), current: page.url.pathname === `${base}/logs` },
         {
             href: `${base}/deployment`,
             label: t('services.tabs.deployment'),

@@ -1,4 +1,4 @@
-//! Agente de BBEL Blacksmith: servidor HTTP local que administra servicios `systemd`.
+//! Agente de Blacksmith: servidor HTTP local que administra servicios `systemd`.
 //!
 //! Solo escucha en loopback. La administración llega por túnel SSH y los webhooks de GitHub por
 //! Nginx (ver `deploy/`).
@@ -12,6 +12,7 @@ pub mod github;
 pub mod http;
 pub mod metrics;
 pub mod nginx;
+pub mod resources;
 pub mod routes;
 pub mod server;
 pub mod services;

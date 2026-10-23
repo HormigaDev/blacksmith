@@ -1,7 +1,7 @@
 //! Archivos de variables de entorno: `<dir>/global.env` (comunes a todos los servicios) y
-//! `<dir>/services/<nombre>.env` (en producción, bajo `/etc/bbel/env`).
+//! `<dir>/services/<nombre>.env` (en producción, bajo `/etc/blacksmith/env`).
 //!
-//! Las plantillas `bbel@.service` y `bbel-deploy@.service` los cargan con `EnvironmentFile=`
+//! Las plantillas `blacksmith@.service` y `blacksmith-deploy@.service` los cargan con `EnvironmentFile=`
 //! (primero el global, así el del servicio gana). systemd los lee como root antes de arrancar,
 //! así que pueden ser `0600` del usuario del agente: ni el propio servicio puede leer el archivo.
 //!
@@ -35,13 +35,13 @@ pub const MAX_KEY_BYTES: usize = 128;
 pub const MAX_VALUE_BYTES: usize = 32 * 1024;
 /// Muy por encima de lo que permiten los límites de arriba con claves y valores típicos.
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
-/// Variables comunes a todos los servicios del servidor. No empieza por `bbel-`, así que nunca
+/// Variables comunes a todos los servicios del servidor. No empieza por `blacksmith-`, así que nunca
 /// coincide con el archivo de un servicio.
 pub const GLOBAL_FILE: &str = "global.env";
 /// Subdirectorio de los archivos de cada servicio: así ningún nombre de servicio choca con el
 /// global.
 const SERVICES_SUBDIR: &str = "services";
-const HEADER: &str = "# Gestionado por BBEL Blacksmith: los cambios manuales se sobrescriben.\n";
+const HEADER: &str = "# Gestionado por Blacksmith: los cambios manuales se sobrescriben.\n";
 
 /// Por qué no se aceptan unas variables. `index` es la posición en la lista recibida.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -378,7 +378,7 @@ fn write_file(dir: &Path, path: &Path, content: &str) -> Result<(), EnvFileError
 }
 
 /// Crea el directorio (`0700`, con sus padres) si falta y rechaza uno que otros puedan leer o
-/// escribir. En producción, `/etc/bbel/env` lo crea systemd (`ConfigurationDirectory=`).
+/// escribir. En producción, `/etc/blacksmith/env` lo crea systemd (`ConfigurationDirectory=`).
 fn ensure_private_dir(dir: &Path) -> Result<(), EnvFileError> {
     fs::DirBuilder::new()
         .recursive(true)

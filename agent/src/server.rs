@@ -100,7 +100,9 @@ pub async fn run(config: Arc<Config>, db: Database, paths: Paths) -> Result<(), 
 async fn report_permissions(services: ServiceManager, environment: Environment) {
     match services.check_permissions().await {
         PermissionCheck::Authorized => {
-            tracing::info!("polkit autoriza al agente a gestionar sus servicios (bbel-*.service)");
+            tracing::info!(
+                "polkit autoriza al agente a gestionar sus servicios (blacksmith-*.service)"
+            );
         }
         PermissionCheck::Denied if environment == Environment::Development => tracing::warn!(
             "polkit no autoriza a este usuario: iniciar, parar o reiniciar servicios fallará \

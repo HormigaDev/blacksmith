@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "BBEL Blacksmith",
+  "productName": "Blacksmith",
   "mainBinaryName": "blacksmith",
   "version": "0.1.0",
   "identifier": "com.blacksmith.client",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "BBEL Blacksmith",
+        "title": "Blacksmith",
         "width": 1280,
         "height": 800,
         "minWidth": 360,

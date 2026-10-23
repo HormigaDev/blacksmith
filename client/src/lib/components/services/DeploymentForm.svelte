@@ -9,12 +9,23 @@
     repositorio (más aislado; se gestiona en su propio panel).
 -->
 <script lang="ts">
+    import { faGithub } from '@fortawesome/free-brands-svg-icons';
     import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
     import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
+    import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
+    import FolderIcon from '@lucide/svelte/icons/folder';
+    import FolderGit2Icon from '@lucide/svelte/icons/folder-git-2';
+    import FolderOpenIcon from '@lucide/svelte/icons/folder-open';
+    import GitBranchIcon from '@lucide/svelte/icons/git-branch';
+    import GlobeIcon from '@lucide/svelte/icons/globe';
+    import KeyRoundIcon from '@lucide/svelte/icons/key-round';
     import LockIcon from '@lucide/svelte/icons/lock';
+    import PlayIcon from '@lucide/svelte/icons/play';
     import PlusIcon from '@lucide/svelte/icons/plus';
+    import SquareTerminalIcon from '@lucide/svelte/icons/square-terminal';
     import Trash2Icon from '@lucide/svelte/icons/trash-2';
-    import { untrack } from 'svelte';
+    import UserRoundIcon from '@lucide/svelte/icons/user-round';
+    import { type Component, untrack } from 'svelte';
 
     import type { RepositoryAccess, RepositoryRef, ServiceDeployment, UpdateDeployment } from '$lib/agent';
     import type { GitHubRepository } from '$lib/github';
@@ -22,6 +33,7 @@
     import { t } from '$lib/i18n';
 
     import Button from '../ui/Button.svelte';
+    import FaIcon from '../ui/FaIcon.svelte';
     import Input from '../ui/Input.svelte';
     import Select from '../ui/Select.svelte';
     import Spinner from '../ui/Spinner.svelte';
@@ -52,12 +64,13 @@
     let branchesLoading = $state(false);
     let nextId = 0;
     let commands = $state(initial.setupCommands.map((value) => ({ id: nextId++, value })));
+    const sectionId = $props.id();
     let startCommand = $state(initial.startCommand);
     let publishDir = $state(initial.publishDir ?? '');
     let access = $state<RepositoryAccess>(initial.access);
     const accessOptions = $derived([
-        { value: 'account' as const, label: t('services.deployment.accessAccount') },
-        { value: 'deployKey' as const, label: t('services.deployment.accessDeployKey') },
+        { value: 'account' as const, label: t('services.deployment.accessAccount'), icon: UserRoundIcon },
+        { value: 'deployKey' as const, label: t('services.deployment.accessDeployKey'), icon: KeyRoundIcon },
     ]);
     let busy = $state(false);
     let submitted = $state(false);
@@ -159,165 +172,220 @@
     }
 </script>
 
-<form class="form" novalidate onsubmit={save}>
-    <div class="row">
-        <div class="grow">
-            {#if locked}
-                <div class="readonly">
-                    <span class="label">{t('services.deployment.repository')}</span>
-                    <span class="locked" title={t('services.deployment.repositoryLocked')}>
-                        <LockIcon />
-                        {locked.owner}/{locked.name}
-                    </span>
-                </div>
-            {:else if !githubConnected}
-                <div class="readonly">
-                    <span class="label">{t('services.deployment.repository')}</span>
-                    {#if onConnectGitHub}
-                        <div><Button onclick={onConnectGitHub}>{t('github.connect')}</Button></div>
-                    {/if}
-                </div>
-            {:else if repositories === null}
-                <div class="readonly">
-                    <span class="label">{t('services.deployment.repository')}</span>
-                    <Spinner label={t('services.deployment.repositoriesLoading')} />
-                </div>
-            {:else}
-                <Select
-                    label={t('services.deployment.repository')}
-                    hint={t('services.deployment.repositoryHint')}
-                    placeholder={t('services.deployment.repositoryPlaceholder')}
-                    options={repositoryOptions}
-                    value={repository}
-                    onValueChange={selectRepository}
-                />
-            {/if}
+{#snippet header(key: string, Icon: Component, title: string, hint: string)}
+    <header class="section-header">
+        <span class="section-icon" aria-hidden="true"><Icon /></span>
+        <div>
+            <h3 class="section-title" id="{sectionId}-{key}">{title}</h3>
+            <p class="section-hint">{hint}</p>
         </div>
-        {#if repository !== NONE}
-            <div class="branch">
-                {#if githubConnected}
-                    <Select
-                        label={t('services.deployment.branch')}
-                        placeholder={branchesLoading ? t('services.deployment.branchLoading') : undefined}
-                        options={branchOptions}
-                        disabled={branchesLoading}
-                        bind:value={branch}
-                    />
+    </header>
+{/snippet}
+
+<form class="form" novalidate onsubmit={save}>
+    <section class="section" aria-labelledby="{sectionId}-source">
+        {@render header(
+            'source',
+            FolderGit2Icon,
+            t('services.deployment.sectionSource'),
+            t('services.deployment.sectionSourceHint'),
+        )}
+        <div class="row">
+            <div class="grow">
+                {#if locked}
+                    <div class="readonly">
+                        <span class="label">{t('services.deployment.repository')}</span>
+                        <span class="field-box">
+                            <FaIcon icon={faGithub} />
+                            <span class="field-value">{locked.owner}/{locked.name}</span>
+                            <span
+                                class="lock"
+                                role="img"
+                                title={t('services.deployment.repositoryLocked')}
+                                aria-label={t('services.deployment.repositoryLocked')}
+                            >
+                                <LockIcon aria-hidden="true" />
+                            </span>
+                        </span>
+                    </div>
+                {:else if !githubConnected}
+                    <div class="readonly">
+                        <span class="label">{t('services.deployment.repository')}</span>
+                        {#if onConnectGitHub}
+                            <div><Button onclick={onConnectGitHub}>{t('github.connect')}</Button></div>
+                        {/if}
+                    </div>
+                {:else if repositories === null}
+                    <div class="readonly">
+                        <span class="label">{t('services.deployment.repository')}</span>
+                        <Spinner label={t('services.deployment.repositoriesLoading')} />
+                    </div>
                 {:else}
-                    <Input label={t('services.deployment.branch')} spellcheck="false" bind:value={branch} />
+                    <Select
+                        label={t('services.deployment.repository')}
+                        hint={t('services.deployment.repositoryHint')}
+                        placeholder={t('services.deployment.repositoryPlaceholder')}
+                        options={repositoryOptions}
+                        value={repository}
+                        onValueChange={selectRepository}
+                    />
                 {/if}
             </div>
-        {/if}
-    </div>
-
-    <div class="group">
-        <span class="label">{t('services.deployment.access')}</span>
-        <div>
-            <ToggleGroup
-                label={t('services.deployment.access')}
-                options={accessOptions}
-                size="sm"
-                bind:value={access}
-            />
+            {#if repository !== NONE}
+                <div class="branch">
+                    {#if githubConnected}
+                        <Select
+                            label={t('services.deployment.branch')}
+                            placeholder={branchesLoading ? t('services.deployment.branchLoading') : undefined}
+                            options={branchOptions}
+                            disabled={branchesLoading}
+                            bind:value={branch}
+                        >
+                            {#snippet leading()}<GitBranchIcon />{/snippet}
+                        </Select>
+                    {:else}
+                        <Input label={t('services.deployment.branch')} spellcheck="false" bind:value={branch}>
+                            {#snippet leading()}<GitBranchIcon />{/snippet}
+                        </Input>
+                    {/if}
+                </div>
+            {/if}
         </div>
-        <p class="hint">
-            {access === 'account'
-                ? t('services.deployment.accessAccountHint')
-                : t('services.deployment.accessDeployKeyHint')}
-        </p>
-    </div>
 
-    <div class="readonly">
-        <span class="label">{t('services.deployment.workingDirectory')}</span>
-        <code class="path">{deployment.workingDirectory}</code>
-    </div>
-
-    <div class="group">
-        <span class="label">{t('services.deployment.setupTitle')}</span>
-        {#if commands.length > 0}
-            <ol class="commands">
-                {#each commands as command, index (command.id)}
-                    <li class="command">
-                        <span class="step">{index + 1}</span>
-                        <div class="grow">
-                            <Input
-                                label={t('services.deployment.command', { index: index + 1 })}
-                                hideLabel
-                                placeholder={t('services.deployment.commandPlaceholder')}
-                                autocomplete="off"
-                                spellcheck="false"
-                                maxlength={2048}
-                                error={submitted ? commandErrors[index] : undefined}
-                                bind:value={command.value}
-                            />
-                        </div>
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            iconOnly
-                            disabled={index === 0}
-                            aria-label={t('services.deployment.moveUp', { index: index + 1 })}
-                            onclick={() => move(index, -1)}
-                        >
-                            <ArrowUpIcon />
-                        </Button>
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            iconOnly
-                            disabled={index === commands.length - 1}
-                            aria-label={t('services.deployment.moveDown', { index: index + 1 })}
-                            onclick={() => move(index, 1)}
-                        >
-                            <ArrowDownIcon />
-                        </Button>
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            iconOnly
-                            aria-label={t('services.deployment.removeCommand', { index: index + 1 })}
-                            onclick={() => (commands = commands.filter((other) => other.id !== command.id))}
-                        >
-                            <Trash2Icon />
-                        </Button>
-                    </li>
-                {/each}
-            </ol>
-        {/if}
-        <div>
-            <Button
-                size="sm"
-                variant="ghost"
-                disabled={commands.length >= MAX_COMMANDS}
-                onclick={() => commands.push({ id: nextId++, value: '' })}
-            >
-                <PlusIcon />
-                {t('services.deployment.addCommand')}
-            </Button>
+        <div class="group">
+            <span class="label">{t('services.deployment.access')}</span>
+            <div>
+                <ToggleGroup
+                    label={t('services.deployment.access')}
+                    options={accessOptions}
+                    size="sm"
+                    bind:value={access}
+                />
+            </div>
+            <p class="hint">
+                {access === 'account'
+                    ? t('services.deployment.accessAccountHint')
+                    : t('services.deployment.accessDeployKeyHint')}
+            </p>
         </div>
-    </div>
+    </section>
 
-    <Input
-        label={t('services.deployment.startCommand')}
-        hint={t('services.deployment.startCommandHint')}
-        placeholder={t('services.deployment.startCommandPlaceholder')}
-        autocomplete="off"
-        spellcheck="false"
-        maxlength={1024}
-        error={submitted ? startError : undefined}
-        bind:value={startCommand}
-    />
+    <section class="section" aria-labelledby="{sectionId}-run">
+        {@render header(
+            'run',
+            SquareTerminalIcon,
+            t('services.deployment.sectionRun'),
+            t('services.deployment.sectionRunHint'),
+        )}
+        <div class="readonly">
+            <span class="label">{t('services.deployment.workingDirectory')}</span>
+            <span class="field-box">
+                <FolderIcon />
+                <code class="field-value">{deployment.workingDirectory}</code>
+            </span>
+        </div>
 
-    <Input
-        label={t('services.deployment.publishDir')}
-        hint={t('services.deployment.publishDirHint')}
-        placeholder={t('services.deployment.publishDirPlaceholder')}
-        autocomplete="off"
-        spellcheck="false"
-        maxlength={200}
-        error={submitted ? publishDirError : undefined}
-        bind:value={publishDir}
-    />
+        <div class="group">
+            <span class="label">{t('services.deployment.setupTitle')}</span>
+            {#if commands.length > 0}
+                <ol class="commands">
+                    {#each commands as command, index (command.id)}
+                        <li class="command">
+                            <span class="step">{index + 1}</span>
+                            <div class="grow">
+                                <Input
+                                    label={t('services.deployment.command', { index: index + 1 })}
+                                    hideLabel
+                                    placeholder={t('services.deployment.commandPlaceholder')}
+                                    autocomplete="off"
+                                    spellcheck="false"
+                                    maxlength={2048}
+                                    error={submitted ? commandErrors[index] : undefined}
+                                    bind:value={command.value}
+                                >
+                                    {#snippet leading()}<ChevronRightIcon />{/snippet}
+                                </Input>
+                            </div>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                iconOnly
+                                disabled={index === 0}
+                                aria-label={t('services.deployment.moveUp', { index: index + 1 })}
+                                onclick={() => move(index, -1)}
+                            >
+                                <ArrowUpIcon />
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                iconOnly
+                                disabled={index === commands.length - 1}
+                                aria-label={t('services.deployment.moveDown', { index: index + 1 })}
+                                onclick={() => move(index, 1)}
+                            >
+                                <ArrowDownIcon />
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                iconOnly
+                                aria-label={t('services.deployment.removeCommand', { index: index + 1 })}
+                                onclick={() => (commands = commands.filter((other) => other.id !== command.id))}
+                            >
+                                <Trash2Icon />
+                            </Button>
+                        </li>
+                    {/each}
+                </ol>
+            {/if}
+            <div>
+                <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={commands.length >= MAX_COMMANDS}
+                    onclick={() => commands.push({ id: nextId++, value: '' })}
+                >
+                    <PlusIcon />
+                    {t('services.deployment.addCommand')}
+                </Button>
+            </div>
+        </div>
+
+        <Input
+            label={t('services.deployment.startCommand')}
+            hint={t('services.deployment.startCommandHint')}
+            placeholder={t('services.deployment.startCommandPlaceholder')}
+            autocomplete="off"
+            spellcheck="false"
+            maxlength={1024}
+            error={submitted ? startError : undefined}
+            bind:value={startCommand}
+        >
+            {#snippet leading()}<PlayIcon />{/snippet}
+        </Input>
+    </section>
+
+    <section class="section" aria-labelledby="{sectionId}-publish">
+        {@render header(
+            'publish',
+            GlobeIcon,
+            t('services.deployment.sectionPublish'),
+            t('services.deployment.sectionPublishHint'),
+        )}
+        <Input
+            label={t('services.deployment.publishDir')}
+            hint={t('services.deployment.publishDirHint')}
+            placeholder={t('services.deployment.publishDirPlaceholder')}
+            autocomplete="off"
+            spellcheck="false"
+            maxlength={200}
+            error={submitted ? publishDirError : undefined}
+            bind:value={publishDir}
+        >
+            {#snippet leading()}<FolderOpenIcon />{/snippet}
+        </Input>
+    </section>
 
     {#if formError}<p class="alert" role="alert">{formError}</p>{/if}
 
@@ -330,7 +398,90 @@
     .form {
         display: flex;
         flex-direction: column;
-        gap: var(--space-5);
+        gap: var(--space-6);
+    }
+
+    /* Secciones separadas por un divisor: origen, ejecución y publicación. */
+    .section {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-4);
+    }
+
+    .section + .section {
+        padding-top: var(--space-6);
+        border-top: var(--border-width) solid var(--color-border);
+    }
+
+    .section-header {
+        display: flex;
+        gap: var(--space-3);
+        align-items: flex-start;
+    }
+
+    /* Icono de la sección: un recuadro del color de acento, el ancla visual de cada bloque. */
+    .section-icon {
+        display: inline-flex;
+        flex-shrink: 0;
+        align-items: center;
+        justify-content: center;
+        width: var(--control-height-md);
+        height: var(--control-height-md);
+        color: var(--color-accent);
+        background-color: var(--color-accent-subtle);
+        border-radius: var(--radius-md);
+    }
+
+    .section-icon :global(svg) {
+        width: var(--icon-size-md);
+        height: var(--icon-size-md);
+    }
+
+    .section-title {
+        font-size: var(--font-size-md);
+        font-weight: var(--font-weight-semibold);
+        color: var(--color-text);
+    }
+
+    .section-hint {
+        font-size: var(--font-size-sm);
+        color: var(--color-text-muted);
+    }
+
+    /* Valor de solo lectura con aspecto de campo (repositorio fijado, directorio de trabajo). */
+    .field-box {
+        display: flex;
+        gap: var(--space-2);
+        align-items: center;
+        min-width: 0;
+        min-height: var(--control-height-md);
+        padding: var(--space-0) var(--space-3);
+        font-size: var(--font-size-sm);
+        color: var(--color-text);
+        background-color: var(--color-bg-subtle);
+        border: var(--border-width) solid var(--color-border);
+        border-radius: var(--radius-md);
+    }
+
+    .field-box > :global(svg),
+    .lock :global(svg) {
+        flex-shrink: 0;
+        width: var(--icon-size-sm);
+        height: var(--icon-size-sm);
+        color: var(--color-text-muted);
+    }
+
+    .field-value {
+        min-width: 0;
+        overflow: hidden;
+        font-family: var(--font-mono);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .lock {
+        display: inline-flex;
+        margin-left: auto;
     }
 
     .row {
@@ -353,40 +504,22 @@
         width: min(100%, var(--layout-card-min-width));
     }
 
-    .group,
-    .readonly {
+    .group {
         display: flex;
         flex-direction: column;
         gap: var(--space-2);
     }
 
+    /* Mismo espacio entre etiqueta y valor que los campos (Field): quedan alineados en fila. */
+    .readonly {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-1);
+    }
+
     .label {
         font-size: var(--font-size-sm);
         font-weight: var(--font-weight-medium);
-    }
-
-    .locked {
-        display: inline-flex;
-        align-items: center;
-        gap: var(--space-2);
-        min-height: var(--control-height-md);
-        font-family: var(--font-mono);
-        font-size: var(--font-size-sm);
-    }
-
-    .locked :global(svg) {
-        width: var(--icon-size-sm);
-        height: var(--icon-size-sm);
-        color: var(--color-text-subtle);
-    }
-
-    .path {
-        align-self: flex-start;
-        padding: var(--space-1) var(--space-2);
-        font-size: var(--font-size-sm);
-        color: var(--color-text-muted);
-        background-color: var(--color-bg-subtle);
-        border-radius: var(--radius-sm);
     }
 
     .commands {

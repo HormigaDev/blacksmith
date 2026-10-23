@@ -115,7 +115,7 @@ pub enum DeployStatus {
 }
 
 /// Un despliegue (`POST /api/v1/services/{name}/deploy`, `GET …/deploys`). Su salida está en los
-/// logs de `bbel-deploy@<nombre>.service` (`…/logs/ws?source=deploy`).
+/// logs de `blacksmith-deploy@<nombre>.service` (`…/logs/ws?source=deploy`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeployRun {

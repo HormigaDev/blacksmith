@@ -84,6 +84,26 @@ impl Journalctl {
 
     /// Las últimas `lines` entradas de la unidad y, después, las nuevas según llegan.
     pub fn follow(&self, unit: &UnitName, lines: u16) -> Result<LogStream, JournalError> {
+        self.spawn(unit, lines, None)
+    }
+
+    /// Como [`Journalctl::follow`], pero solo desde `since` (segundos Unix): p. ej. la salida
+    /// del último despliegue, sin la de los anteriores.
+    pub fn follow_since(
+        &self,
+        unit: &UnitName,
+        since: u64,
+        lines: u16,
+    ) -> Result<LogStream, JournalError> {
+        self.spawn(unit, lines, Some(since))
+    }
+
+    fn spawn(
+        &self,
+        unit: &UnitName,
+        lines: u16,
+        since: Option<u64>,
+    ) -> Result<LogStream, JournalError> {
         let mut command = std::process::Command::new(&self.program);
         command
             .env_clear()
@@ -107,8 +127,13 @@ impl Journalctl {
                 "--output=json",
                 OUTPUT_FIELDS,
                 "--follow",
+                // Con `--follow`, journalctl solo mira el arranque actual: la salida de un
+                // despliegue anterior a reiniciar el servidor (o los logs previos de un servicio)
+                // no aparecería. `--merge` lee todos los journals disponibles.
+                "--merge",
             ])
             .arg(format!("--lines={lines}"))
+            .args(since.map(|since| format!("--since=@{since}")))
             .arg(unit_arg)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

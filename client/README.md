@@ -1,4 +1,4 @@
-# Cliente de escritorio de BBEL Blacksmith
+# Cliente de escritorio de Blacksmith
 
 Tauri 2 + SvelteKit (Svelte 5, modo SPA con `adapter-static`). Plataformas: Linux y Windows.
 

@@ -6,13 +6,13 @@
 //! |---|---|---|
 //! | `%S` | `/var/lib` | `$XDG_STATE_HOME` (`~/.local/state`) |
 //! | `%E` | `/etc` | `$XDG_CONFIG_HOME` (`~/.config`) |
-//! | Variables | `%E/bbel/env` | |
-//! | Versiones desplegadas | `%S/bbel/<nombre>` | |
+//! | Variables | `%E/blacksmith/env` | |
+//! | Versiones desplegadas | `%S/blacksmith/<nombre>` | |
 //! | Especificación y token de cada despliegue | `%S/blacksmith/deployments/<nombre>` | |
 //! | Acceso a GitHub (token) | `%S/blacksmith/github.json` | |
 //! | Sitios de nginx generados | `%S/blacksmith/nginx/sites` | |
 //! | Argumentos de certbot | `%S/blacksmith/nginx/certs` | |
-//! | Plantillas de nginx (editables) | `%E/bbel/nginx/templates` | |
+//! | Plantillas de nginx (editables) | `%E/blacksmith/nginx/templates` | |
 
 use std::path::{Path, PathBuf};
 
@@ -28,9 +28,9 @@ pub struct Paths {
     pub deployments_dir: PathBuf,
     /// Cuenta y token de GitHub del servidor (ver `crate::github`).
     pub github_file: PathBuf,
-    /// Configuración de nginx de cada sitio (`<servicio>.conf`), que incluye `conf.d/bbel.conf`.
+    /// Configuración de nginx de cada sitio (`<servicio>.conf`), que incluye `conf.d/blacksmith.conf`.
     pub nginx_sites_dir: PathBuf,
-    /// Argumentos de certbot por certificado (`<dominio>.env`), para `bbel-certbot@.service`.
+    /// Argumentos de certbot por certificado (`<dominio>.env`), para `blacksmith-certbot@.service`.
     pub nginx_certs_dir: PathBuf,
     /// Plantillas propias del administrador; si falta una, se usa la que trae el agente.
     pub nginx_templates_dir: PathBuf,
@@ -64,13 +64,13 @@ impl Paths {
     /// Con raíces arbitrarias (tests).
     pub fn rooted(state: &Path, config: &Path, units_dir: Option<PathBuf>) -> Self {
         Self {
-            env_dir: config.join("bbel/env"),
-            apps_dir: state.join("bbel"),
+            env_dir: config.join("blacksmith/env"),
+            apps_dir: state.join("blacksmith"),
             deployments_dir: state.join("blacksmith/deployments"),
             github_file: state.join("blacksmith/github.json"),
             nginx_sites_dir: state.join("blacksmith/nginx/sites"),
             nginx_certs_dir: state.join("blacksmith/nginx/certs"),
-            nginx_templates_dir: config.join("bbel/nginx/templates"),
+            nginx_templates_dir: config.join("blacksmith/nginx/templates"),
             units_dir,
         }
     }
@@ -91,8 +91,8 @@ mod tests {
     #[test]
     fn rutas_del_sistema() {
         let paths = Paths::for_scope(Scope::System).unwrap();
-        assert_eq!(paths.env_dir, Path::new("/etc/bbel/env"));
-        assert_eq!(paths.apps_dir, Path::new("/var/lib/bbel"));
+        assert_eq!(paths.env_dir, Path::new("/etc/blacksmith/env"));
+        assert_eq!(paths.apps_dir, Path::new("/var/lib/blacksmith"));
         assert_eq!(
             paths.deployments_dir,
             Path::new("/var/lib/blacksmith/deployments")
@@ -107,11 +107,11 @@ mod tests {
         );
         assert_eq!(
             paths.nginx_templates_dir,
-            Path::new("/etc/bbel/nginx/templates")
+            Path::new("/etc/blacksmith/nginx/templates")
         );
         assert_eq!(paths.units_dir, None);
         let slug = ServiceSlug::new("api").unwrap();
-        assert_eq!(paths.app_dir(&slug), Path::new("/var/lib/bbel/api"));
+        assert_eq!(paths.app_dir(&slug), Path::new("/var/lib/blacksmith/api"));
     }
 
     #[test]
@@ -121,7 +121,7 @@ mod tests {
             Path::new("/home/ana/.config"),
             Some(PathBuf::from("/home/ana/.config/systemd/user")),
         );
-        assert_eq!(paths.env_dir, Path::new("/home/ana/.config/bbel/env"));
+        assert_eq!(paths.env_dir, Path::new("/home/ana/.config/blacksmith/env"));
         assert_eq!(
             paths.deployments_dir,
             Path::new("/home/ana/.local/state/blacksmith/deployments")

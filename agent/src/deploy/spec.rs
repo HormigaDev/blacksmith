@@ -1,4 +1,4 @@
-//! Especificación de un despliegue: lo que el agente deja para `bbel-deploy@<nombre>.service`
+//! Especificación de un despliegue: lo que el agente deja para `blacksmith-deploy@<nombre>.service`
 //! (`spec.json`, que la unidad recibe como credencial). Es el contrato entre el agente y
 //! `run-deploy`.
 

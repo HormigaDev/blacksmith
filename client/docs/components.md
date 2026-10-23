@@ -131,7 +131,7 @@ Los datos compartidos (servidores, GitHub, servicios) viven en stores con runes 
 - Logs en tiempo real: `followLogs(serverId, servicio, onEvent)` abre el WebSocket desde Rust
   (`logs_follow`) y entrega cada evento por un `Channel` de Tauri; devuelve la función para
   cerrarlo. El estado del visor lo lleva `LogSession` (`$lib/services/log-session.svelte`). Con
-  `{ deploy: true }` sigue la salida del último despliegue (`bbel-deploy@<servicio>`).
+  `{ deploy: true }` sigue la salida del último despliegue (`blacksmith-deploy@<servicio>`).
 - Los tipos de la API (`types.ts`) son espejo de `shared` y se validan con sus `parse*`.
 
 ### GitHub (`$lib/github`)
@@ -147,13 +147,15 @@ Los datos compartidos (servidores, GitHub, servicios) viven en stores con runes 
   conectada: el token va de la bóveda de Rust al agente por el túnel, sin pasar por la webview.
   El servidor clona y prepara solo. Opcionalmente, un servicio usa su propia llave de despliegue
   (`DeployKeyPanel`); `addDeployKey` la registra en un clic solo con una App propia con
-  _Administration_ (la de BBEL nunca lo pide) y, si falla con `GITHUB_PERMISSION_MISSING`, la
+  _Administration_ (la de Blacksmith nunca lo pide) y, si falla con `GITHUB_PERMISSION_MISSING`, la
   interfaz pasa al registro manual.
 
 ### Sitios de nginx
 
-`SiteForm` (pestaña Web) edita el sitio de un servicio: plantilla, dominios, puerto y HTTPS. Valida
-con las mismas reglas que el agente (`nginx::sites::validate`); el certificado llega en segundo
+`SiteForm` (pestaña Web) edita el sitio de un servicio: plantilla, dominios, puerto, rutas hacia otros
+puertos (`routes`: prefijo, puerto y WebSocket) y HTTPS. Valida con las mismas reglas que el agente
+(`nginx::sites::validate` y `validate_routes`; los choques con la plantilla los decide el agente,
+que lee la plantilla real, y el formulario solo adelanta los de las plantillas por defecto); el certificado llega en segundo
 plano y `ServiceEntry` refresca el sitio mientras `tls` es `issuing`. Los errores del agente se
 muestran por su código (`NGINX_REJECTED`, `DOMAIN_IN_USE`…); el motivo de un certificado fallido
 es un dato del sitio (`tlsDetail`), no un mensaje de error.

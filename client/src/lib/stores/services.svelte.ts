@@ -50,9 +50,11 @@ import {
     type UpdateDeployment,
 } from '$lib/agent';
 import { describeError, type HttpClient } from '$lib/http';
+import { appendSample, type ResourceSample } from '$lib/services/resource-history';
 
 /** Cada cuánto se refresca el estado de un servicio a la vista. */
-export const STATUS_INTERVAL_MS = 5000;
+export const STATUS_INTERVAL_MS = 3000;
+
 /** Más a menudo mientras hay un despliegue en curso. */
 export const DEPLOYING_INTERVAL_MS = 2000;
 
@@ -132,6 +134,8 @@ export class ServiceEntry {
     /** Llave de despliegue: `undefined` sin cargar; `null` si aún no se generó. */
     key = $state<DeployKey | null | undefined>(undefined);
     runs = $state<DeployRun[] | null>(null);
+    /** Últimas lecturas de consumo (la más reciente al final). Solo mientras alguien mira. */
+    history = $state.raw<readonly ResourceSample[]>([]);
     /** Sitio de nginx: `undefined` sin cargar; `null` si no tiene. */
     site = $state<Site | null | undefined>(undefined);
     /** Error de la última carga (despliegue o variables). */
@@ -164,10 +168,17 @@ export class ServiceEntry {
             serviceStatus(this.client, this.name),
             deployRuns(this.client, this.name),
         ]);
-        if (status.status === 'fulfilled') this.status = status.value;
+        if (status.status === 'fulfilled') {
+            this.status = status.value;
+            this.#record(status.value);
+        }
         if (runs.status === 'fulfilled') this.runs = runs.value;
         // Mientras se pide el certificado, también el sitio (pasa a HTTPS o falla).
         if (this.issuing) await this.loadSite().catch(() => undefined);
+    }
+
+    #record(status: ServiceStatus): void {
+        this.history = appendSample(this.history, status);
     }
 
     /** Mantiene el estado al día mientras haya alguien mirando. Devuelve la función para dejar

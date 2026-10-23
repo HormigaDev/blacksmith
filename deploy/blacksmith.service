@@ -1,4 +1,4 @@
-# BBEL Blacksmith Agent: unit de systemd para despliegue bare-metal.
+# Blacksmith Agent: unit de systemd para despliegue bare-metal.
 #
 # Instalación (como root):
 #   useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin blacksmith
@@ -6,8 +6,8 @@
 #   install -d -o root -g blacksmith -m 0750 /etc/blacksmith
 #   install -o root -g blacksmith -m 0640 agent.env /etc/blacksmith/agent.env   # ver .env.template
 #   install -o root -g root -m 0644 deploy/polkit/10-blacksmith.rules /etc/polkit-1/rules.d/
-#   useradd --system --home-dir /var/lib/bbel --no-create-home --shell /usr/sbin/nologin bbel
-#   install -m 0644 "deploy/systemd/bbel@.service" "deploy/systemd/bbel-deploy@.service" /etc/systemd/system/
+#   useradd --system --home-dir /var/lib/blacksmith --no-create-home --shell /usr/sbin/nologin blacksmith
+#   install -m 0644 "deploy/systemd/blacksmith@.service" "deploy/systemd/blacksmith-deploy@.service" /etc/systemd/system/
 #   install -m 0644 deploy/blacksmith.service /etc/systemd/system/blacksmith.service
 #   systemctl daemon-reload && systemctl enable --now blacksmith
 #
@@ -15,12 +15,12 @@
 # reemplazar su propio ejecutable.
 #
 # Gestión de units: el agente no escala privilegios (NoNewPrivileges= lo impide). Puede arrancar,
-# parar y reiniciar únicamente las units `bbel-*.service` porque así lo autoriza la regla de
+# parar y reiniciar únicamente las units `blacksmith-*.service` porque así lo autoriza la regla de
 # polkit deploy/polkit/10-blacksmith.rules; cualquier otra petición suya a polkit se deniega.
 
 [Unit]
-Description=BBEL Blacksmith Agent
-Documentation=https://github.com/HormigaDev/bbel-blacksmith
+Description=Blacksmith Agent
+Documentation=https://github.com/HormigaDev/blacksmith
 After=network.target
 # Evita bucles de reinicio infinitos: como mucho 5 arranques fallidos por minuto.
 StartLimitIntervalSec=60
@@ -41,10 +41,10 @@ SupplementaryGroups=systemd-journal
 # el directorio, propiedad de blacksmith, y es lo único escribible con ProtectSystem=strict.
 StateDirectory=blacksmith
 StateDirectoryMode=0700
-# Variables de entorno de los servicios (/etc/bbel/env): systemd crea el directorio, propiedad de
+# Variables de entorno de los servicios (/etc/blacksmith/env): systemd crea el directorio, propiedad de
 # blacksmith y 0700, y lo deja escribible pese a ProtectSystem=strict. Las cargan las plantillas
-# deploy/systemd/bbel@.service y bbel-deploy@.service.
-ConfigurationDirectory=bbel/env
+# deploy/systemd/blacksmith@.service y blacksmith-deploy@.service.
+ConfigurationDirectory=blacksmith/env
 ConfigurationDirectoryMode=0700
 
 # Configuración no secreta (BLACKSMITH_*). root:blacksmith 0640.

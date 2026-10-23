@@ -6,7 +6,7 @@
 use std::{fs, path::Path, process::Command};
 
 use agent::nginx::template::{SiteVars, load, render_body, render_site};
-use shared::SiteTemplate;
+use shared::{SiteRoute, SiteTemplate};
 
 const NGINX: &str = "/usr/sbin/nginx";
 
@@ -30,24 +30,24 @@ fn nginx_acepta_todas_las_plantillas() {
     let root = dir.path();
 
     // Snippets y ajustes comunes, como los instala install.sh.
-    fs::create_dir_all(root.join("snippets/bbel")).unwrap();
-    for entry in fs::read_dir(deploy.join("snippets/bbel")).unwrap() {
+    fs::create_dir_all(root.join("snippets/blacksmith")).unwrap();
+    for entry in fs::read_dir(deploy.join("snippets/blacksmith")).unwrap() {
         let entry = entry.unwrap();
         fs::copy(
             entry.path(),
-            root.join("snippets/bbel").join(entry.file_name()),
+            root.join("snippets/blacksmith").join(entry.file_name()),
         )
         .unwrap();
     }
     let sites = root.join("sites");
     fs::create_dir_all(&sites).unwrap();
-    let common = fs::read_to_string(deploy.join("conf.d/bbel.conf"))
+    let common = fs::read_to_string(deploy.join("conf.d/blacksmith.conf"))
         .unwrap()
         .replace("@SITES_DIR@", sites.to_str().unwrap());
-    fs::write(root.join("bbel.conf"), common).unwrap();
+    fs::write(root.join("blacksmith.conf"), common).unwrap();
     fs::write(
-        root.join("bbel-default.conf"),
-        high_ports(&fs::read_to_string(deploy.join("conf.d/bbel-default.conf")).unwrap()),
+        root.join("blacksmith-default.conf"),
+        high_ports(&fs::read_to_string(deploy.join("conf.d/blacksmith-default.conf")).unwrap()),
     )
     .unwrap();
 
@@ -63,7 +63,14 @@ fn nginx_acepta_todas_las_plantillas() {
             "-pkeyopt",
             "ec_paramgen_curve:prime256v1",
         ])
-        .args(["-nodes", "-days", "1", "-subj", "/CN=bbel.test", "-keyout"])
+        .args([
+            "-nodes",
+            "-days",
+            "1",
+            "-subj",
+            "/CN=blacksmith.test",
+            "-keyout",
+        ])
         .arg(certs.join("privkey.pem"))
         .arg("-out")
         .arg(certs.join("fullchain.pem"))
@@ -88,20 +95,33 @@ fn nginx_acepta_todas_las_plantillas() {
                 service: service.clone(),
                 template,
                 domains: vec![
-                    format!("{service}.bbel.test"),
-                    format!("www.{service}.bbel.test"),
+                    format!("{service}.blacksmith.test"),
+                    format!("www.{service}.blacksmith.test"),
                 ],
                 upstream: template.proxies().then(|| "127.0.0.1:3000".into()),
                 root: template
                     .serves_files()
-                    .then(|| format!("/var/lib/bbel/{service}/public/current")),
+                    .then(|| format!("/var/lib/blacksmith/{service}/public/current")),
                 tls,
+                // Rutas hacia otros puertos en todas: una normal y una de WebSocket.
+                routes: vec![
+                    SiteRoute {
+                        path: "/graphql".into(),
+                        port: 3002,
+                        websocket: false,
+                    },
+                    SiteRoute {
+                        path: "/socket.io/".into(),
+                        port: 3001,
+                        websocket: true,
+                    },
+                ],
             };
             let body = render_body(&load(&templates_dir, template).unwrap(), &vars).unwrap();
             let site = render_site(&body, &vars)
                 // Rutas del sistema → prefijo temporal.
                 .replace(
-                    &format!("/etc/letsencrypt/live/{service}.bbel.test/"),
+                    &format!("/etc/letsencrypt/live/{service}.blacksmith.test/"),
                     &format!("{}/", certs.display()),
                 )
                 .replace("/var/log/nginx/", &format!("{}/", root.display()));
@@ -123,7 +143,7 @@ fn nginx_acepta_todas_las_plantillas() {
         format!(
             "pid {root}/nginx.pid;\nerror_log stderr;\nevents {{}}\nhttp {{\n    \
              include /etc/nginx/mime.types;\n    access_log {root}/access.log;\n    \
-             include {root}/bbel.conf;\n    include {root}/bbel-default.conf;\n}}\n",
+             include {root}/blacksmith.conf;\n    include {root}/blacksmith-default.conf;\n}}\n",
             root = root.display()
         ),
     )

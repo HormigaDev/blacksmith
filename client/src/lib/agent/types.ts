@@ -113,7 +113,22 @@ export interface SiteConfig {
     port: number | null;
     https: boolean;
     email: string | null;
+    /** Rutas hacia otros puertos, antes que la plantilla (p. ej. `/api/` → 3000). */
+    routes: SiteRoute[];
 }
+
+/** `shared::SiteRoute`: prefijo de ruta que nginx reenvía a otro puerto local. */
+export interface SiteRoute {
+    path: string;
+    port: number;
+    websocket: boolean;
+}
+
+const isSiteRoute = (value: unknown): value is SiteRoute =>
+    isRecord(value) &&
+    typeof value.path === 'string' &&
+    typeof value.port === 'number' &&
+    typeof value.websocket === 'boolean';
 
 export const TLS_STATUSES = ['off', 'issuing', 'active', 'failed'] as const;
 export type TlsStatus = (typeof TLS_STATUSES)[number];
@@ -131,6 +146,8 @@ export function parseSite(data: unknown): Site | null {
     if (data === null) return null;
     if (!isRecord(data)) fail('sitio');
     const { name, domains, port, https, email, tlsDetail, configPath, updatedAt } = data;
+    // Un agente anterior a las rutas no envía el campo.
+    const routes = data.routes ?? [];
     const template = SITE_TEMPLATES.find((known) => known === data.template);
     const tls = TLS_STATUSES.find((known) => known === data.tls);
     if (
@@ -142,13 +159,15 @@ export function parseSite(data: unknown): Site | null {
         !(port === null || typeof port === 'number') ||
         typeof https !== 'boolean' ||
         !(email === null || typeof email === 'string') ||
+        !Array.isArray(routes) ||
+        !routes.every(isSiteRoute) ||
         !(tlsDetail === null || typeof tlsDetail === 'string') ||
         typeof configPath !== 'string' ||
         typeof updatedAt !== 'number'
     ) {
         fail('sitio');
     }
-    return { name, template, domains, port, https, email, tls, tlsDetail, configPath, updatedAt };
+    return { name, template, domains, port, https, email, routes, tls, tlsDetail, configPath, updatedAt };
 }
 
 export const LOAD_STATES = ['loaded', 'not-found', 'bad-setting', 'error', 'masked', 'merged', 'stub'] as const;
@@ -180,6 +199,64 @@ export interface ServiceStatus {
     /** Versión activa y la anterior (a la que vuelve un rollback). */
     release: string | null;
     previousRelease: string | null;
+    /** Consumo del servicio entero (su cgroup: todos sus procesos). */
+    resources: ServiceResources;
+    /** Capacidad del servidor. */
+    host: HostCapacity;
+}
+
+/** `shared::ServiceResources`. `null` si no se conoce (parado, sin contabilidad o sin límite). */
+export interface ServiceResources {
+    memoryBytes: number | null;
+    memoryPeakBytes: number | null;
+    memoryLimitBytes: number | null;
+    swapBytes: number | null;
+    /** 100 = un núcleo completo. */
+    cpuPercent: number | null;
+    tasks: number | null;
+    restarts: number | null;
+    uptimeSecs: number | null;
+}
+
+/** `shared::HostCapacity`. */
+export interface HostCapacity {
+    cpuCores: number;
+    memoryBytes: number;
+    swapBytes: number;
+}
+
+const RESOURCE_KEYS = [
+    'memoryBytes',
+    'memoryPeakBytes',
+    'memoryLimitBytes',
+    'swapBytes',
+    'cpuPercent',
+    'tasks',
+    'restarts',
+    'uptimeSecs',
+] as const;
+
+function parseResources(data: unknown): ServiceResources {
+    if (!isRecord(data)) fail('consumo');
+    const resources = {} as Record<(typeof RESOURCE_KEYS)[number], number | null>;
+    for (const key of RESOURCE_KEYS) {
+        const value = data[key];
+        if (!(value === null || typeof value === 'number')) fail('consumo');
+        resources[key] = value;
+    }
+    return resources;
+}
+
+function parseHost(data: unknown): HostCapacity {
+    if (
+        !isRecord(data) ||
+        typeof data.cpuCores !== 'number' ||
+        typeof data.memoryBytes !== 'number' ||
+        typeof data.swapBytes !== 'number'
+    ) {
+        fail('servidor');
+    }
+    return { cpuCores: data.cpuCores, memoryBytes: data.memoryBytes, swapBytes: data.swapBytes };
 }
 
 /** `shared::DeployKey`: parte pública de la llave de despliegue. */
@@ -376,6 +453,8 @@ export function parseServiceStatus(data: unknown): ServiceStatus {
         deployed,
         release,
         previousRelease,
+        resources: parseResources(data.resources),
+        host: parseHost(data.host),
     };
 }
 

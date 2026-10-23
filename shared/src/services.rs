@@ -12,7 +12,7 @@ pub const SERVICES_PATH: &str = "/api/v1/services";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceSummary {
-    /// Identificador corto (`[a-z0-9-]`, 1-48): define la unidad `bbel-<name>.service`.
+    /// Identificador corto (`[a-z0-9-]`, 1-48): define la unidad `blacksmith-<name>.service`.
     pub name: String,
     pub display_name: String,
     pub description: String,
@@ -92,6 +92,41 @@ pub struct ServiceStatusReport {
     /// Versión activa y la anterior, a la que vuelve un rollback.
     pub release: Option<String>,
     pub previous_release: Option<String>,
+    /// Consumo del servicio entero (su cgroup: todos sus procesos, no solo el principal).
+    pub resources: ServiceResources,
+    /// Capacidad del servidor, para poner el consumo en proporción.
+    pub host: HostCapacity,
+}
+
+/// Consumo del cgroup del servicio según systemd. `None` si no se conoce (servicio parado,
+/// contabilidad desactivada o sin límite configurado).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceResources {
+    /// Memoria en uso (incluye la caché de páginas de sus archivos), en bytes.
+    pub memory_bytes: Option<u64>,
+    /// Máximo de memoria desde que arrancó.
+    pub memory_peak_bytes: Option<u64>,
+    /// Límite de memoria configurado (`MemoryMax=`).
+    pub memory_limit_bytes: Option<u64>,
+    pub swap_bytes: Option<u64>,
+    /// CPU desde la lectura anterior, con un decimal. 100 = un núcleo completo (como `top`).
+    pub cpu_percent: Option<f64>,
+    /// Procesos e hilos.
+    pub tasks: Option<u64>,
+    /// Reinicios automáticos tras un fallo (`Restart=`).
+    pub restarts: Option<u64>,
+    /// Segundos en marcha desde el último arranque.
+    pub uptime_secs: Option<u64>,
+}
+
+/// Capacidad del servidor.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostCapacity {
+    pub cpu_cores: u32,
+    pub memory_bytes: u64,
+    pub swap_bytes: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -120,7 +155,7 @@ mod tests {
     fn json_del_estado() {
         let report = ServiceStatusReport {
             name: "api".into(),
-            unit: "bbel@api.service".into(),
+            unit: "blacksmith@api.service".into(),
             load_state: LoadState::NotFound,
             active_state: ActiveState::Inactive,
             sub_state: "dead".into(),
@@ -129,10 +164,12 @@ mod tests {
             deployed: false,
             release: None,
             previous_release: None,
+            resources: ServiceResources::default(),
+            host: HostCapacity::default(),
         };
         assert_eq!(
             serde_json::to_string(&report).unwrap(),
-            r#"{"name":"api","unit":"bbel@api.service","loadState":"not-found","activeState":"inactive","subState":"dead","pid":null,"metrics":null,"deployed":false,"release":null,"previousRelease":null}"#
+            r#"{"name":"api","unit":"blacksmith@api.service","loadState":"not-found","activeState":"inactive","subState":"dead","pid":null,"metrics":null,"deployed":false,"release":null,"previousRelease":null,"resources":{"memoryBytes":null,"memoryPeakBytes":null,"memoryLimitBytes":null,"swapBytes":null,"cpuPercent":null,"tasks":null,"restarts":null,"uptimeSecs":null},"host":{"cpuCores":0,"memoryBytes":0,"swapBytes":0}}"#
         );
         let metrics = ProcessMetrics {
             rss_bytes: 1_048_576,
@@ -149,12 +186,12 @@ mod tests {
     fn json_de_la_accion() {
         let report = ServiceActionReport {
             name: "api".into(),
-            unit: "bbel-api.service".into(),
+            unit: "blacksmith-api.service".into(),
             outcome: ServiceOutcome::Restarted,
         };
         assert_eq!(
             serde_json::to_string(&report).unwrap(),
-            r#"{"name":"api","unit":"bbel-api.service","outcome":"restarted"}"#
+            r#"{"name":"api","unit":"blacksmith-api.service","outcome":"restarted"}"#
         );
     }
 }

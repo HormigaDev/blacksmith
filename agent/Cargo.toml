@@ -1,6 +1,6 @@
 [package]
 name = "agent"
-description = "Agente de BBEL Blacksmith para servidores bare-metal"
+description = "Agente de Blacksmith para servidores bare-metal"
 version.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -21,7 +21,7 @@ workspace = true
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "macros", "matched-path", "query", "tokio", "tracing", "ws"] }
 dotenvy = "0.15"
 rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
-rustix = { version = "1", default-features = false, features = ["fs", "process", "std", "system"] }
+rustix = { version = "1", default-features = false, features = ["fs", "process", "std", "system", "time"] }
 sd-notify = "0.4"
 secrecy = "0.10"
 serde = { version = "1", features = ["derive"] }

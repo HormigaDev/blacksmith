@@ -1,3 +1,4 @@
+import { createRawSnippet } from 'svelte';
 import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
@@ -17,6 +18,7 @@ const run = (id: number, status: DeployRun['status'], detail: string | null = nu
     finishedAt: status === 'running' ? null : NOW / 1000 - 75,
     detail,
 });
+const output = createRawSnippet(() => ({ render: () => '<p>salida del despliegue</p>' }));
 
 describe('DeployRuns', () => {
     test('lanza un despliegue', async () => {
@@ -32,22 +34,41 @@ describe('DeployRuns', () => {
         await expect.element(page.getByText('Define el comando de arranque.')).toBeVisible();
     });
 
-    test('lista los últimos con su resultado; uno en curso bloquea el botón', async () => {
+    test('último fallido: aviso sobrio y la salida a petición', async () => {
         await render(DeployRuns, {
-            runs: [run(3, 'running'), run(2, 'failed', 'npm ci terminó con código 1'), run(1, 'succeeded')],
+            runs: [run(3, 'failed', 'el despliegue falló: revisa sus logs'), run(2, 'succeeded')],
             blocked: null,
             onDeploy: vi.fn(),
+            output,
+            now: NOW,
+        });
+        const latest = page.getByRole('region', { name: 'Último despliegue' });
+        await expect.element(latest.getByText('Fallido')).toBeVisible();
+        await expect.element(latest.getByText(/el despliegue falló/)).toBeVisible();
+        await expect.element(page.getByText('salida del despliegue')).not.toBeInTheDocument();
+        await page.getByRole('button', { name: 'Ver salida' }).click();
+        await expect.element(page.getByText('salida del despliegue')).toBeVisible();
+        await expect
+            .element(page.getByRole('button', { name: 'Ocultar salida' }))
+            .toHaveAttribute('aria-expanded', 'true');
+    });
+
+    test('en curso: la salida se ve sola y no se puede lanzar otro', async () => {
+        await render(DeployRuns, {
+            runs: [run(4, 'running'), run(3, 'failed', 'npm ci falló'), run(2, 'succeeded')],
+            blocked: null,
+            onDeploy: vi.fn(),
+            output,
             now: NOW,
         });
         await expect.element(page.getByRole('button', { name: /Desplegando/ })).toBeDisabled();
-        const items = page.getByRole('listitem');
-        await expect.element(items.nth(2)).toBeInTheDocument();
-        const text = (index: number) => items.nth(index).element().textContent ?? '';
-        expect(text(0)).toContain('En curso');
-        expect(text(1)).toContain('Fallido');
-        expect(text(1)).toContain('npm ci terminó con código 1');
-        expect(text(2)).toContain('Correcto');
-        expect(text(2)).toContain('45 s');
+        await expect.element(page.getByText('salida del despliegue')).toBeVisible();
+        // Los anteriores, compactos: estado con etiqueta y sin el motivo de cada fallo.
+        const history = page.getByRole('region', { name: 'Anteriores' });
+        await expect.element(history.getByRole('listitem').nth(1)).toBeInTheDocument();
+        expect(history.getByRole('listitem').nth(0).element().textContent).toContain('Fallido');
+        expect(history.getByRole('listitem').nth(1).element().textContent).toContain('Desplegado');
+        await expect.element(page.getByText('npm ci falló')).not.toBeInTheDocument();
     });
 
     test('rollback: marca la versión activa y vuelve a la anterior tras confirmar', async () => {
@@ -62,10 +83,8 @@ describe('DeployRuns', () => {
             onRollback,
             now: NOW,
         });
-        const items = page.getByRole('listitem');
-        await expect.element(items.nth(1)).toBeInTheDocument();
-        expect(items.nth(0).element().textContent).toContain('Activa');
-        expect(items.nth(1).element().textContent).toContain('Rollback');
+        await expect.element(page.getByRole('region', { name: 'Último despliegue' }).getByText('En uso')).toBeVisible();
+        expect(page.getByRole('region', { name: 'Anteriores' }).element().textContent).toContain('Rollback');
 
         await page.getByRole('button', { name: 'Volver a la anterior' }).click();
         expect(onRollback).not.toHaveBeenCalled();
@@ -83,5 +102,18 @@ describe('DeployRuns', () => {
             now: NOW,
         });
         await expect.element(page.getByRole('button', { name: 'Volver a la anterior' })).not.toBeInTheDocument();
+    });
+
+    test('versión en uso con el servicio detenido: lo aclara', async () => {
+        const runs = [run(2, 'succeeded')];
+        await render(DeployRuns, {
+            runs,
+            blocked: null,
+            activeRelease: runs[0]?.release,
+            serviceRunning: false,
+            onDeploy: vi.fn(),
+            now: NOW,
+        });
+        await expect.element(page.getByText(/el servicio está detenido/)).toBeVisible();
     });
 });

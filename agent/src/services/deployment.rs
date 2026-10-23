@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn normaliza_y_acepta() {
         let normalized = normalize(update(
-            Some((" HormigaDev ", "bbel-blacksmith", " feature/v2.1 ")),
+            Some((" HormigaDev ", "blacksmith", " feature/v2.1 ")),
             &[
                 "  npm ci  ",
                 "npm run build -- --mode=production && echo 'listo'",

@@ -6,7 +6,7 @@
 //!    los servicios salen de la base de datos y las acciones se piden por `id` de registro. Una
 //!    unidad desplegada a mano fuera del agente no aparece ni se puede nombrar desde el cliente.
 //! 2. **Solo se gestionan unidades con el prefijo reservado.** La unidad de un servicio se deriva
-//!    de su [`ServiceSlug`] (`bbel-<slug>.service`); nunca se acepta un nombre de unidad del
+//!    de su [`ServiceSlug`] (`blacksmith-<slug>.service`); nunca se acepta un nombre de unidad del
 //!    cliente. La regla de polkit (`deploy/polkit/10-blacksmith.rules`) aplica el mismo patrón
 //!    en el sistema, de modo que ni un agente comprometido puede tocar `ssh.service` y similares.
 
@@ -17,9 +17,10 @@ use std::{fmt, path::PathBuf, str::FromStr, time::Duration};
 use rustix::process::Pid;
 
 use shared::{
-    DeployKey, DeployKind, DeployRun, DeployStatus, EnvVariable, GitHubAccess, GlobalEnvironment,
-    RegisterService, RepositoryAccess, ServiceActionReport, ServiceDeployment, ServiceEnvironment,
-    ServiceOutcome, ServiceStatusReport, ServiceSummary, SetGitHubAccess, UpdateDeployment,
+    ActiveState, DeployKey, DeployKind, DeployRun, DeployStatus, EnvVariable, GitHubAccess,
+    GlobalEnvironment, RegisterService, RepositoryAccess, ServiceActionReport, ServiceDeployment,
+    ServiceEnvironment, ServiceOutcome, ServiceStatusReport, ServiceSummary, SetGitHubAccess,
+    UpdateDeployment,
 };
 
 use self::deployment::InvalidDeployment;
@@ -39,20 +40,21 @@ use crate::{
     error::DisplayChain,
     github::{GitHubAccessError, GitHubStore},
     metrics::{MetricsError, ProcessSampler},
+    resources::{CgroupCpu, host_capacity},
     systemd::{Action, Outcome, Systemctl, SystemctlError, UnitName},
 };
 
-/// Plantilla de los servicios desplegados: `bbel@<nombre>.service` (deploy/systemd/bbel@.service).
+/// Plantilla de los servicios desplegados: `blacksmith@<nombre>.service` (deploy/systemd/blacksmith@.service).
 /// Su propia unidad (`blacksmith.service`) no encaja, así que el agente no puede pararse a sí mismo.
-pub const MANAGED_UNIT_PREFIX: &str = "bbel@";
+pub const MANAGED_UNIT_PREFIX: &str = "blacksmith@";
 
-/// Plantilla del despliegue: `bbel-deploy@<nombre>.service` clona, prepara y activa una versión.
-pub const DEPLOY_UNIT_PREFIX: &str = "bbel-deploy@";
+/// Plantilla del despliegue: `blacksmith-deploy@<nombre>.service` clona, prepara y activa una versión.
+pub const DEPLOY_UNIT_PREFIX: &str = "blacksmith-deploy@";
 
 /// Patrón de las unidades gestionadas (servicios y despliegues). Debe coincidir literalmente con
 /// el de la regla de polkit (lo comprueba un test).
 pub const MANAGED_UNIT_PATTERN: &str =
-    r"^bbel(-deploy)?@[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?\.service$";
+    r"^blacksmith(-deploy)?@[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?\.service$";
 
 const SLUG_MAX_LEN: usize = 48;
 
@@ -73,7 +75,7 @@ impl fmt::Display for ServiceId {
 }
 
 /// Nombre corto y estable de un servicio: `[a-z0-9-]`, de 1 a 48 caracteres, sin guion al
-/// principio ni al final. Define su unidad: `bbel-<slug>.service`.
+/// principio ni al final. Define su unidad: `blacksmith-<slug>.service`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ServiceSlug(String);
 
@@ -331,6 +333,7 @@ pub struct ServiceManager {
     /// Lo mismo por SSH, para la llave de despliegue (`git@github.com:`).
     ssh_clone_base: String,
     github: GitHubStore,
+    cgroup_cpu: CgroupCpu,
     sampler: ProcessSampler,
 }
 
@@ -341,6 +344,7 @@ impl ServiceManager {
             systemctl,
             env: EnvStore::new(paths.env_dir.clone()),
             github: GitHubStore::new(paths.github_file.clone()),
+            cgroup_cpu: CgroupCpu::default(),
             paths,
             clone_base: GITHUB_CLONE_BASE.to_owned(),
             ssh_clone_base: GITHUB_SSH_BASE.to_owned(),
@@ -376,7 +380,7 @@ impl ServiceManager {
             .nodename()
             .to_string_lossy()
             .into_owned();
-        let comment = format!("bbel-{slug}@{host}");
+        let comment = format!("blacksmith-{slug}@{host}");
         let key = tokio::task::spawn_blocking(move || keys::ensure(&dir, &comment))
             .await
             .map_err(DbError::from)??;
@@ -407,7 +411,7 @@ impl ServiceManager {
         Ok(self.db.deploy_runs(service.id, 20).await?)
     }
 
-    /// Lanza un despliegue: deja la especificación para `bbel-deploy@<nombre>.service`, encola la
+    /// Lanza un despliegue: deja la especificación para `blacksmith-deploy@<nombre>.service`, encola la
     /// unidad y lo sigue en segundo plano. Si termina bien, reinicia el servicio con la versión
     /// nueva. La salida está en los logs de la unidad de despliegue.
     pub async fn deploy(&self, slug: &ServiceSlug) -> Result<DeployRun, ServiceError> {
@@ -495,7 +499,7 @@ impl ServiceManager {
         .await
     }
 
-    /// Deja la especificación y las credenciales para `bbel-deploy@<nombre>.service`, registra el
+    /// Deja la especificación y las credenciales para `blacksmith-deploy@<nombre>.service`, registra el
     /// despliegue y lo sigue en segundo plano.
     async fn launch(
         &self,
@@ -885,10 +889,27 @@ impl ServiceManager {
         let unit = service.slug.unit();
         let status = self.systemctl.status(&unit).await?;
         let releases = self.db.releases(service.id).await?;
-        let metrics = match status.main_pid {
-            Some(pid) => self.sampler.sample(pid).await?,
-            None => None,
-        };
+        let running = matches!(
+            status.active_state,
+            ActiveState::Active | ActiveState::Reloading | ActiveState::Deactivating
+        );
+        // Las dos mediciones pueden esperar una segunda lectura: en paralelo, no una tras otra.
+        let (metrics, resources) = tokio::join!(
+            async {
+                match status.main_pid {
+                    Some(pid) => self.sampler.sample(pid).await,
+                    None => Ok(None),
+                }
+            },
+            self.cgroup_cpu.resources(
+                &self.systemctl,
+                &unit,
+                status.resources,
+                status.control_group.as_deref(),
+                running
+            )
+        );
+        let metrics = metrics?;
         Ok(ServiceStatusReport {
             name: slug.to_string(),
             unit: unit.to_string(),
@@ -902,6 +923,8 @@ impl ServiceManager {
             deployed: releases.active.is_some(),
             release: releases.active,
             previous_release: releases.previous,
+            resources,
+            host: host_capacity(),
         })
     }
 
@@ -920,7 +943,7 @@ impl ServiceManager {
     }
 
     /// Comprueba de verdad, sin efectos, si systemd dejará actuar al agente: pide `stop` de la
-    /// unidad reservada `bbel-agent-permission-check.service`, que no existe. polkit decide
+    /// unidad reservada `blacksmith-agent-permission-check.service`, que no existe. polkit decide
     /// antes de que systemd busque la unidad, así que la respuesta dice cuál de los dos habló:
     /// «no cargada» es que polkit lo autorizó; «acceso denegado», que no. Recorre el mismo
     /// camino que una acción real (endurecimiento de la unidad, D-Bus, polkit y systemd).
@@ -958,10 +981,10 @@ mod tests {
         for slug in ["api", "a", "mi-app-2", "0", &"a".repeat(SLUG_MAX_LEN)] {
             let slug = ServiceSlug::new(slug).unwrap();
             let unit = slug.unit();
-            assert_eq!(unit.as_str(), format!("bbel@{slug}.service"));
+            assert_eq!(unit.as_str(), format!("blacksmith@{slug}.service"));
             assert_eq!(
                 slug.deploy_unit().as_str(),
-                format!("bbel-deploy@{slug}.service")
+                format!("blacksmith-deploy@{slug}.service")
             );
             // Una unidad gestionada siempre es un `UnitName` válido.
             assert_eq!(UnitName::new(unit.as_str()).unwrap(), unit);

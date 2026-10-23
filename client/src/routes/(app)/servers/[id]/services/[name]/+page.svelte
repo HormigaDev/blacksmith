@@ -1,36 +1,27 @@
-<!-- Pestaña Logs: los logs del servicio en tiempo real. La sesión se cierra al salir. -->
+<!--
+    Pestaña Resumen (la de entrada al servicio): su consumo y su estado de un vistazo. El estado
+    lo refresca el layout del servicio mientras se ve; la tendencia se acumula con cada lectura.
+-->
 <script lang="ts">
     import { page } from '$app/state';
-    import { followLogs } from '$lib/agent';
-    import LogViewer from '$lib/components/services/LogViewer.svelte';
-    import { servers } from '$lib/servers/servers.svelte';
-    import { LogSession } from '$lib/services/log-session.svelte';
+    import ServiceDashboard from '$lib/components/services/ServiceDashboard.svelte';
+    import { servers, serviceStore } from '$lib/stores';
 
     const entry = $derived(servers.find(page.params.id ?? ''));
     const serverId = $derived(entry?.profile.id);
-    const connected = $derived(entry?.status === 'connected');
     const name = $derived(page.params.name ?? '');
+    const service = $derived(serverId ? serviceStore.service(serverId, name) : null);
 
-    let session = $state<LogSession>();
+    // Rama con la que se construyó la versión activa.
+    const branch = $derived(
+        service?.runs?.find((run) => run.kind === 'deploy' && run.release === service.status?.release)?.branch ?? null,
+    );
 
     $effect(() => {
-        const id = serverId;
-        const current = name;
-        if (!id || !connected) return;
-        const logs = new LogSession((onEvent) => followLogs(id, current, onEvent));
-        session = logs;
-        void logs.start();
-        return () => void logs.stop();
+        if (service && service.site === undefined) void service.loadSite().catch(() => undefined);
     });
 </script>
 
-{#if session}
-    <LogViewer
-        {name}
-        lines={session.lines}
-        status={session.status}
-        endReason={session.endReason}
-        error={session.error}
-        onReconnect={() => session?.start()}
-    />
+{#if service}
+    <ServiceDashboard status={service.status} history={service.history} {branch} site={service.site} />
 {/if}

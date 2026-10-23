@@ -1,6 +1,6 @@
 [package]
 name = "shared"
-description = "Contrato de datos entre el agente y el cliente de BBEL Blacksmith"
+description = "Contrato de datos entre el agente y el cliente de Blacksmith"
 version.workspace = true
 authors.workspace = true
 repository.workspace = true

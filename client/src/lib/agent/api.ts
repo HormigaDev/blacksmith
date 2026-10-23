@@ -176,7 +176,8 @@ export async function followLogs(
     serverId: string,
     service: string,
     onEvent: (event: LogEvent) => void,
-    options: { deploy?: boolean } = {},
+    /** `deploy`: la salida de los despliegues; `since` (segundos Unix): solo desde ese instante. */
+    options: { deploy?: boolean; since?: number } = {},
 ): Promise<() => Promise<void>> {
     const channel = new Channel<unknown>();
     channel.onmessage = (message) => {
@@ -192,6 +193,7 @@ export async function followLogs(
             serverId,
             service,
             deploy: options.deploy ?? false,
+            since: options.since ?? null,
             onEvent: channel,
         });
     } catch (error) {

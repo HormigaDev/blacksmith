@@ -1,7 +1,7 @@
-# BBEL Blacksmith · certificado de Let's Encrypt para el sitio cuyo dominio principal es %i. La
-# arranca el agente (polkit solo le deja `start` de `bbel-certbot@<dominio>.service`).
+# Blacksmith · certificado de Let's Encrypt para el sitio cuyo dominio principal es %i. La
+# arranca el agente (polkit solo le deja `start` de `blacksmith-certbot@<dominio>.service`).
 #
-# - Desafío HTTP-01 por webroot: nginx sirve /var/lib/bbel-acme (snippets/bbel/acme.conf). No se
+# - Desafío HTTP-01 por webroot: nginx sirve /var/lib/blacksmith-acme (snippets/blacksmith/acme.conf). No se
 #   detiene nginx ni se toca su configuración: certbot solo escribe el desafío y el certificado.
 # - Los demás dominios y el email salen de un archivo que escribe el agente con valores ya
 #   validados (solo dominios y una dirección de correo).
@@ -9,14 +9,14 @@
 #   certbot guarda en la configuración de renovación).
 
 [Unit]
-Description=BBEL Blacksmith: certificado TLS de %i
+Description=Blacksmith: certificado TLS de %i
 After=network-online.target nginx.service
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 EnvironmentFile=@CERTS_DIR@/%i.env
-ExecStart=/usr/bin/certbot certonly --webroot --webroot-path /var/lib/bbel-acme \
+ExecStart=/usr/bin/certbot certonly --webroot --webroot-path /var/lib/blacksmith-acme \
     --non-interactive --agree-tos --keep-until-expiring --cert-name %i \
-    $BBEL_CERTBOT_ARGS --deploy-hook "systemctl reload nginx"
+    $BLACKSMITH_CERTBOT_ARGS --deploy-hook "systemctl reload nginx"
 TimeoutStartSec=5min

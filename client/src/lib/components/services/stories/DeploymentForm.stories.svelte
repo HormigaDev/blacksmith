@@ -18,7 +18,7 @@
         name: 'api',
         repository: null,
         access: 'account',
-        workingDirectory: '/srv/bbel/api',
+        workingDirectory: '/srv/blacksmith/api',
         setupCommands: [],
         startCommand: '',
         publishDir: null,

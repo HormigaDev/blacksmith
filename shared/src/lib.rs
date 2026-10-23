@@ -18,10 +18,10 @@ pub use env::{EnvVariable, GlobalEnvironment, ServiceEnvironment, UpdateEnvironm
 pub use error::{ApiErrorBody, ErrorCode};
 pub use logs::{LOG_BACKLOG_LINES, LogEndReason, LogEntry, LogEvent};
 pub use services::{
-    ActiveState, LoadState, ProcessMetrics, RegisterService, SERVICES_PATH, ServiceActionReport,
-    ServiceOutcome, ServiceStatusReport, ServiceSummary,
+    ActiveState, HostCapacity, LoadState, ProcessMetrics, RegisterService, SERVICES_PATH,
+    ServiceActionReport, ServiceOutcome, ServiceResources, ServiceStatusReport, ServiceSummary,
 };
-pub use site::{Site, SiteConfig, SiteTemplate, TlsStatus};
+pub use site::{Site, SiteConfig, SiteRoute, SiteTemplate, TlsStatus};
 
 use serde::{Deserialize, Serialize};
 

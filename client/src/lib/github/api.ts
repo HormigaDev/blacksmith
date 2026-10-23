@@ -60,7 +60,7 @@ export const configureGitHub = (settings: GitHubSettings): Promise<GitHubSetting
 export const useDefaultGitHubApp = (): Promise<GitHubSettings> => call('github_use_default_app');
 /**
  * Registra la llave de despliegue en el repositorio (solo lectura). Solo con una App propia con
- * permiso *Administration*; con la de BBEL falla con `GITHUB_PERMISSION_MISSING`.
+ * permiso *Administration*; con la de Blacksmith falla con `GITHUB_PERMISSION_MISSING`.
  */
 export const addDeployKey = (owner: string, name: string, title: string, key: string): Promise<void> =>
     call('github_add_deploy_key', { owner, name, title, key });

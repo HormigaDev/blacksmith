@@ -76,6 +76,7 @@ pub async fn logs_follow(
     server_id: String,
     service: String,
     deploy: Option<bool>,
+    since: Option<u64>,
     on_event: Channel<LogEvent>,
 ) -> CommandResult<u32> {
     // El agente valida el nombre; esto solo impide componer otra ruta.
@@ -88,13 +89,21 @@ pub async fn logs_follow(
         return Err(CommandError::InvalidTarget("service"));
     }
     let addr = state.agent_addr(&server_id).await?;
-    // `deploy`: la salida de los despliegues (`bbel-deploy@<servicio>`) en lugar del servicio.
-    let source = if deploy.unwrap_or(false) {
-        "?source=deploy"
+    // `deploy`: la salida de los despliegues (`blacksmith-deploy@<servicio>`) en lugar del servicio.
+    // `since` (segundos Unix): solo desde ese instante, p. ej. el último despliegue.
+    let mut query: Vec<String> = Vec::new();
+    if deploy.unwrap_or(false) {
+        query.push("source=deploy".into());
+    }
+    if let Some(since) = since {
+        query.push(format!("since={since}"));
+    }
+    let query = if query.is_empty() {
+        String::new()
     } else {
-        ""
+        format!("?{}", query.join("&"))
     };
-    let url = format!("ws://{addr}/api/v1/services/{service}/logs/ws{source}");
+    let url = format!("ws://{addr}/api/v1/services/{service}/logs/ws{query}");
     let config = WebSocketConfig::default()
         .max_message_size(Some(MAX_LOG_MESSAGE))
         .max_frame_size(Some(MAX_LOG_MESSAGE));

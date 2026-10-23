@@ -8,7 +8,7 @@ const SERVICE = {
     name: 'api',
     displayName: 'API de pagos',
     description: 'Cobros con tarjeta.',
-    unit: 'bbel-api.service',
+    unit: 'blacksmith-api.service',
     createdAt: 0,
 };
 
@@ -18,7 +18,7 @@ describe('ServiceCard', () => {
         await expect
             .element(page.getByRole('link', { name: 'API de pagos' }))
             .toHaveAttribute('href', '/servers/x/services/api');
-        await expect.element(page.getByText('bbel-api.service')).toBeVisible();
+        await expect.element(page.getByText('blacksmith-api.service')).toBeVisible();
         await expect.element(page.getByText('Cobros con tarjeta.')).toBeVisible();
     });
 

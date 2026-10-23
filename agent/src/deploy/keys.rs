@@ -1,6 +1,6 @@
 //! Llave de despliegue de un servicio (opcional, acceso `deployKey`): ed25519, generada en el
 //! servidor con `ssh-keygen` y de solo lectura en GitHub. La privada nunca sale del servidor
-//! (`0600`, en el directorio del agente) y solo la recibe `bbel-deploy@<nombre>.service`, como
+//! (`0600`, en el directorio del agente) y solo la recibe `blacksmith-deploy@<nombre>.service`, como
 //! credencial y durante el despliegue; la pública se muestra para añadirla al repositorio
 //! (*Settings → Deploy keys*).
 
@@ -50,7 +50,7 @@ pub fn read(dir: &Path) -> Result<Option<DeployKey>, KeyError> {
 }
 
 /// Genera la llave si no existe (idempotente) y la devuelve. `comment` la identifica en GitHub
-/// (p. ej. `bbel-api@servidor`).
+/// (p. ej. `blacksmith-api@servidor`).
 pub fn ensure(dir: &Path, comment: &str) -> Result<DeployKey, KeyError> {
     if let Some(key) = read(dir)? {
         return Ok(key);
@@ -113,9 +113,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let keys = dir.path().join("deployments/api/key");
         assert!(read(&keys).unwrap().is_none());
-        let key = ensure(&keys, "bbel-api@prueba").unwrap();
+        let key = ensure(&keys, "blacksmith-api@prueba").unwrap();
         assert!(key.public_key.starts_with("ssh-ed25519 "));
-        assert!(key.public_key.ends_with(" bbel-api@prueba"));
+        assert!(key.public_key.ends_with(" blacksmith-api@prueba"));
         assert!(key.fingerprint.starts_with("SHA256:"));
         assert_eq!(
             fs::metadata(keys.join(PRIVATE_KEY)).unwrap().mode() & 0o777,

@@ -1,19 +1,19 @@
 #!/bin/sh
-# Instala la integración de nginx de BBEL Blacksmith. Ejecutar como root desde la raíz del
+# Instala la integración de nginx de Blacksmith. Ejecutar como root desde la raíz del
 # repositorio:
 #   sh deploy/nginx/install.sh            servidor: el agente corre como `blacksmith`
 #   sh deploy/nginx/install.sh --local    modo local: el agente corre como su usuario (con
 #                                         privilegios de root obtenidos desde ese usuario)
 #
 # Qué hace (es idempotente; repítalo tras actualizar Blacksmith):
-#   - /etc/nginx/conf.d/bbel.conf: ajustes comunes e `include` de los sitios que genera el agente.
-#   - /etc/nginx/conf.d/bbel-default.conf: cierra las peticiones a hosts desconocidos (solo si no
+#   - /etc/nginx/conf.d/blacksmith.conf: ajustes comunes e `include` de los sitios que genera el agente.
+#   - /etc/nginx/conf.d/blacksmith-default.conf: cierra las peticiones a hosts desconocidos (solo si no
 #     hay ya otro `default_server`; ver el aviso).
-#   - /etc/nginx/snippets/bbel/: TLS, cabeceras de seguridad, proxy, WebSocket, estáticos, ACME.
-#   - /etc/bbel/nginx/templates/: plantillas por tipo de proyecto. Las que ya existan NO se
+#   - /etc/nginx/snippets/blacksmith/: TLS, cabeceras de seguridad, proxy, WebSocket, estáticos, ACME.
+#   - /etc/blacksmith/nginx/templates/: plantillas por tipo de proyecto. Las que ya existan NO se
 #     sobrescriben: son suyas para editarlas.
-#   - /var/lib/bbel-acme: desafíos de Let's Encrypt.
-#   - bbel-nginx.service y bbel-certbot@.service: lo único que corre como root por cuenta del
+#   - /var/lib/blacksmith-acme: desafíos de Let's Encrypt.
+#   - blacksmith-nginx.service y blacksmith-certbot@.service: lo único que corre como root por cuenta del
 #     agente (validar/recargar nginx y pedir certificados), y la regla de polkit que se lo permite.
 set -eu
 
@@ -44,26 +44,26 @@ echo "==> Modo $MODE (agente: $AGENT_USER)"
 
 # Directorios del agente (también los crea él al arrancar).
 install -d -m 0700 -o "$AGENT_USER" "$STATE/blacksmith" "$STATE/blacksmith/nginx" "$SITES_DIR" "$CERTS_DIR"
-install -d -m 0755 /var/lib/bbel-acme
+install -d -m 0755 /var/lib/blacksmith-acme
 
 echo "==> Snippets y ajustes comunes"
-install -d -m 0755 /etc/nginx/snippets/bbel
-install -m 0644 "$HERE"/snippets/bbel/*.conf /etc/nginx/snippets/bbel/
-sed "s|@SITES_DIR@|$SITES_DIR|" "$HERE/conf.d/bbel.conf" >/etc/nginx/conf.d/bbel.conf
-chmod 0644 /etc/nginx/conf.d/bbel.conf
+install -d -m 0755 /etc/nginx/snippets/blacksmith
+install -m 0644 "$HERE"/snippets/blacksmith/*.conf /etc/nginx/snippets/blacksmith/
+sed "s|@SITES_DIR@|$SITES_DIR|" "$HERE/conf.d/blacksmith.conf" >/etc/nginx/conf.d/blacksmith.conf
+chmod 0644 /etc/nginx/conf.d/blacksmith.conf
 
-if grep -rqsE 'listen[^;]*default_server' /etc/nginx/sites-enabled /etc/nginx/conf.d --exclude=bbel-default.conf; then
+if grep -rqsE 'listen[^;]*default_server' /etc/nginx/sites-enabled /etc/nginx/conf.d --exclude=blacksmith-default.conf; then
     echo "    aviso: ya hay un default_server (p. ej. /etc/nginx/sites-enabled/default): no se instala"
-    echo "    bbel-default.conf. Para que un Host desconocido no reciba ese sitio, desactívelo"
+    echo "    blacksmith-default.conf. Para que un Host desconocido no reciba ese sitio, desactívelo"
     echo "    (rm /etc/nginx/sites-enabled/default) y vuelva a ejecutar este script."
 else
-    install -m 0644 "$HERE/conf.d/bbel-default.conf" /etc/nginx/conf.d/bbel-default.conf
+    install -m 0644 "$HERE/conf.d/blacksmith-default.conf" /etc/nginx/conf.d/blacksmith-default.conf
 fi
 
-echo "==> Plantillas (/etc/bbel/nginx/templates)"
-install -d -m 0755 /etc/bbel /etc/bbel/nginx /etc/bbel/nginx/templates
+echo "==> Plantillas (/etc/blacksmith/nginx/templates)"
+install -d -m 0755 /etc/blacksmith /etc/blacksmith/nginx /etc/blacksmith/nginx/templates
 for template in "$HERE"/templates/*.conf; do
-    target=/etc/bbel/nginx/templates/$(basename "$template")
+    target=/etc/blacksmith/nginx/templates/$(basename "$template")
     if [ -e "$target" ]; then
         cmp -s "$template" "$target" || echo "    se conserva su versión de $(basename "$template")"
     else
@@ -72,9 +72,9 @@ for template in "$HERE"/templates/*.conf; do
 done
 
 echo "==> Unidades privilegiadas"
-install -m 0644 "$HERE/systemd/bbel-nginx.service" /etc/systemd/system/bbel-nginx.service
-sed "s|@CERTS_DIR@|$CERTS_DIR|" "$HERE/systemd/bbel-certbot@.service" >/etc/systemd/system/bbel-certbot@.service
-chmod 0644 /etc/systemd/system/bbel-certbot@.service
+install -m 0644 "$HERE/systemd/blacksmith-nginx.service" /etc/systemd/system/blacksmith-nginx.service
+sed "s|@CERTS_DIR@|$CERTS_DIR|" "$HERE/systemd/blacksmith-certbot@.service" >/etc/systemd/system/blacksmith-certbot@.service
+chmod 0644 /etc/systemd/system/blacksmith-certbot@.service
 systemctl daemon-reload
 
 echo "==> polkit"

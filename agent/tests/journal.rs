@@ -76,7 +76,19 @@ async fn argumentos_y_entorno() {
     let mut stream = follow("eco");
     assert_eq!(
         next_message(&mut stream).await,
-        "--no-pager --quiet --output=json --output-fields=MESSAGE,PRIORITY,_PID,SYSLOG_IDENTIFIER --follow --lines=100 --unit=eco.service"
+        "--no-pager --quiet --output=json --output-fields=MESSAGE,PRIORITY,_PID,SYSLOG_IDENTIFIER --follow --merge --lines=100 --unit=eco.service"
+    );
+}
+
+/// Solo desde un instante (la salida del último despliegue, no la de los anteriores).
+#[tokio::test]
+async fn desde_un_instante() {
+    let mut stream = Journalctl::new(fake(), Scope::System)
+        .follow_since(&UnitName::new("eco").unwrap(), 1_792_713_740, 2000)
+        .unwrap();
+    assert_eq!(
+        next_message(&mut stream).await,
+        "--no-pager --quiet --output=json --output-fields=MESSAGE,PRIORITY,_PID,SYSLOG_IDENTIFIER --follow --merge --lines=2000 --since=@1792713740 --unit=eco.service"
     );
 }
 

@@ -16,7 +16,7 @@
 
     const base: ServiceStatus = {
         name: 'api',
-        unit: 'bbel-api.service',
+        unit: 'blacksmith-api.service',
         loadState: 'loaded',
         activeState: 'inactive',
         subState: 'dead',
@@ -25,6 +25,17 @@
         deployed: true,
         release: 'r1800000000-000000000',
         previousRelease: null,
+        resources: {
+            memoryBytes: null,
+            memoryPeakBytes: null,
+            memoryLimitBytes: null,
+            swapBytes: null,
+            cpuPercent: null,
+            tasks: null,
+            restarts: null,
+            uptimeSecs: null,
+        },
+        host: { cpuCores: 4, memoryBytes: 8 * 1024 ** 3, swapBytes: 0 },
     };
     const noop = () => {};
 </script>
@@ -46,6 +57,7 @@
             subState: 'running',
             pid: 812,
             metrics: { rssBytes: 52_428_800, rssMb: 50, cpuPercent: 3.2 },
+            resources: { ...base.resources, memoryBytes: 188_743_680, cpuPercent: 3.2, tasks: 9, uptimeSecs: 3600 },
         }}
         onAction={noop}
     />

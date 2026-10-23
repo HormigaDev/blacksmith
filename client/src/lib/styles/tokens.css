@@ -27,6 +27,7 @@
 
     /* Títulos: un poco más compactos que el texto. */
     --letter-spacing-tight: -0.015em;
+    --letter-spacing-wide: 0.04em;
 
     /* Espaciado: escala de 4 px. */
     --space-0: 0;
@@ -45,6 +46,10 @@
     /* Bordes */
     --border-width: 1px;
     --border-width-strong: 2px;
+    /* Gráficas: trazo de las líneas de datos, alto de las tendencias y de los medidores. */
+    --chart-line-width: 2px;
+    --sparkline-height: 2.5rem;
+    --meter-height: 0.375rem;
     /* Línea divisoria dibujada por dentro del borde inferior: no desborda un contenedor con scroll. */
     --shadow-divider-bottom: inset 0 calc(-1 * var(--border-width)) 0 var(--color-border);
 
@@ -81,6 +86,9 @@
     --layout-sidebar-width: 16rem;
     --layout-content-max-width: 80rem;
     --layout-card-min-width: 18rem;
+    --layout-tile-min-width: 13rem;
+    /* Columna del estado en el historial de despliegues (alinea las filas). */
+    --deploy-state-width: 6rem;
     --log-viewer-height: 32rem;
     --control-height-sm: 1.75rem;
     --control-height-md: 2.25rem;

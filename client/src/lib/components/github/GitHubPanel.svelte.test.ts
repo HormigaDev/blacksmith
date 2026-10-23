@@ -46,7 +46,7 @@ describe('GitHubPanel', () => {
         const props = handlers();
         await render(GitHubPanel, { settings: SETTINGS, custom: true, user: null, pending: null, ...props });
         await expect.element(page.getByText('Usando tu App «mi-blacksmith».')).toBeVisible();
-        await page.getByRole('button', { name: 'Usar la App de BBEL' }).click();
+        await page.getByRole('button', { name: 'Usar la App de Blacksmith' }).click();
         expect(props.onUseDefault).toHaveBeenCalledOnce();
     });
 

@@ -1,6 +1,6 @@
 <!--
     Alta de un servicio en el agente: solo datos informativos (no toca systemd). El identificador
-    define la unidad `bbel-<identificador>.service`; se muestra mientras se escribe.
+    define la unidad `blacksmith-<identificador>.service`; se muestra mientras se escribe.
 -->
 <script lang="ts">
     import { type RegisterService, SERVICE_NAME_PATTERN } from '$lib/agent';
@@ -27,7 +27,7 @@
     let fieldErrors = $state<Partial<Record<Field, string>>>({});
     let formError = $state<string>();
 
-    const unit = $derived(`bbel-${name.trim() || '…'}.service`);
+    const unit = $derived(`blacksmith-${name.trim() || '…'}.service`);
 
     function validate(): boolean {
         const errors: Partial<Record<Field, string>> = {};

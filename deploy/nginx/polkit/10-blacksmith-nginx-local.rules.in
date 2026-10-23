@@ -1,4 +1,4 @@
-// BBEL Blacksmith · modo local: el agente corre como @USER@ (no como `blacksmith`) y solo
+// Blacksmith · modo local: el agente corre como @USER@ (no como `blacksmith`) y solo
 // necesita aplicar la configuración de nginx y pedir certificados. Lo instala
 // `deploy/nginx/install.sh --local`.
 //
@@ -12,8 +12,8 @@ polkit.addRule(function (action, subject) {
     var unit = action.lookup("unit");
     var verb = action.lookup("verb");
     if (verb === "start" && typeof unit === "string"
-        && (unit === "bbel-nginx.service"
-            || /^bbel-certbot@[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?\.service$/.test(unit))) {
+        && (unit === "blacksmith-nginx.service"
+            || /^blacksmith-certbot@[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?\.service$/.test(unit))) {
         return polkit.Result.YES;
     }
     return polkit.Result.NOT_HANDLED;

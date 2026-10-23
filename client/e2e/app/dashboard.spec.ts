@@ -4,7 +4,7 @@ test.describe('Ventana principal', () => {
     test('carga en español con el título y el idioma del documento', async ({ page }) => {
         await page.goto('/');
         await waitForApp(page);
-        await expect(page).toHaveTitle('Panel · BBEL Blacksmith');
+        await expect(page).toHaveTitle('Panel · Blacksmith');
         await expect(page.locator('html')).toHaveAttribute('lang', 'es');
         await expect(page.getByRole('heading', { level: 1 })).toHaveText('Sin servidores todavía');
     });

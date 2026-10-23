@@ -66,13 +66,19 @@ const MAX_INCOMING: usize = 4 * 1024;
 /// Lo que puede acumularse sin enviar antes de que el envío falle.
 const MAX_WRITE_BUFFER: usize = 1024 * 1024;
 
-/// `?source=deploy`: los logs de `bbel-deploy@<nombre>` (salida de los despliegues) en lugar de
+/// `?source=deploy`: los logs de `blacksmith-deploy@<nombre>` (salida de los despliegues) en lugar de
 /// los del servicio.
 #[derive(Debug, Default, serde::Deserialize)]
 pub struct LogsQuery {
     #[serde(default)]
     source: LogSource,
+    /// Solo desde este instante (segundos Unix): p. ej. el inicio del último despliegue.
+    since: Option<u64>,
 }
+
+/// Con `since`, más margen que el historial normal: la salida entera de un despliegue (el visor
+/// del cliente guarda como mucho 2000 líneas).
+const SINCE_MAX_LINES: u16 = 2000;
 
 #[derive(Debug, Default, Clone, Copy, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -102,7 +108,10 @@ pub async fn stream(
         .clone()
         .try_acquire_owned()
         .map_err(|_| AppError::LogStreamLimit(state.config.max_log_streams))?;
-    let stream = state.journal.follow(&unit, LOG_BACKLOG_LINES)?;
+    let stream = match query.since {
+        Some(since) => state.journal.follow_since(&unit, since, SINCE_MAX_LINES)?,
+        None => state.journal.follow(&unit, LOG_BACKLOG_LINES)?,
+    };
     let shutdown = state.shutdown.subscribe();
     let timings = state.log_timings;
 

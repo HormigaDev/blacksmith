@@ -193,6 +193,62 @@ pub struct UnitStatus {
     pub sub_state: String,
     /// Como en [`Systemctl::main_pid`]: `None` si no hay proceso principal.
     pub main_pid: Option<Pid>,
+    /// Contadores del cgroup de la unidad (todos sus procesos, no solo el principal).
+    pub resources: UnitResources,
+    /// Ruta del cgroup (`ControlGroup`, relativa a `/sys/fs/cgroup`), si está en marcha.
+    pub control_group: Option<String>,
+}
+
+/// Contadores del cgroup de una unidad según systemd. `None` cuando systemd no los tiene (unidad
+/// parada, contabilidad desactivada o sin límite).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UnitResources {
+    /// `MemoryCurrent`: memoria del cgroup (incluye la caché de páginas de sus archivos).
+    pub memory: Option<u64>,
+    /// `MemoryPeak`: máximo desde que arrancó.
+    pub memory_peak: Option<u64>,
+    /// `MemoryMax`: límite configurado.
+    pub memory_max: Option<u64>,
+    /// `MemorySwapCurrent`.
+    pub swap: Option<u64>,
+    /// `CPUUsageNSec`: CPU consumida desde que arrancó, en nanosegundos.
+    pub cpu_nsec: Option<u64>,
+    /// `TasksCurrent`: procesos e hilos.
+    pub tasks: Option<u64>,
+    /// `NRestarts`: reinicios automáticos (`Restart=`) desde el último arranque manual.
+    pub restarts: Option<u64>,
+    /// `ActiveEnterTimestampMonotonic`: cuándo pasó a activa (µs del reloj monotónico).
+    pub active_since_us: Option<u64>,
+}
+
+/// Propiedades de [`UnitResources`], en el orden de sus campos.
+const RESOURCE_PROPERTIES: [&str; 8] = [
+    "MemoryCurrent",
+    "MemoryPeak",
+    "MemoryMax",
+    "MemorySwapCurrent",
+    "CPUUsageNSec",
+    "TasksCurrent",
+    "NRestarts",
+    "ActiveEnterTimestampMonotonic",
+];
+
+/// Ruta de cgroup que se puede unir a `/sys/fs/cgroup` sin salir de él: absoluta, sin `..` y
+/// con los caracteres que usa systemd (los demás los escapa como `\x2d`).
+fn valid_control_group(path: &str) -> bool {
+    path.starts_with('/')
+        && path.len() <= 512
+        && path.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(byte, b'/' | b'.' | b'_' | b'-' | b'@' | b':' | b'\\')
+        })
+        && !path.split('/').any(|part| part == "..")
+}
+
+/// Valor numérico de systemd, o `None` si no tiene (`[not set]`, `infinity`, vacío, `0` en las
+/// marcas de tiempo o `u64::MAX`, su «sin valor» interno).
+fn parse_counter(raw: &str) -> Option<u64> {
+    raw.parse::<u64>().ok().filter(|value| *value != u64::MAX)
 }
 
 /// Salida de una ejecución de `systemctl`, ya acotada.
@@ -311,7 +367,7 @@ impl Systemctl {
     pub async fn status(&self, unit: &UnitName) -> Result<UnitStatus, SystemctlError> {
         let operation = Operation::ShowStatus;
         let timeout = self.timeout.min(QUERY_TIMEOUT);
-        let options = [
+        let mut options = vec![
             "-p",
             "LoadState",
             "-p",
@@ -321,6 +377,10 @@ impl Systemctl {
             "-p",
             "MainPID",
         ];
+        options.extend(["-p", "ControlGroup"]);
+        for property in RESOURCE_PROPERTIES {
+            options.extend(["-p", property]);
+        }
         let execution = self.execute(operation, &options, unit, timeout).await?;
         if !execution.status.success() {
             return Err(classify(
@@ -335,6 +395,12 @@ impl Systemctl {
             unit: unit.clone(),
             output: String::from_utf8_lossy(&execution.stdout).into_owned(),
         })
+    }
+
+    /// CPU consumida por el cgroup de la unidad (`CPUUsageNSec`), para medir el uso entre dos
+    /// lecturas. `None` si systemd no la tiene.
+    pub async fn cpu_usage_nsec(&self, unit: &UnitName) -> Result<Option<u64>, SystemctlError> {
+        Ok(self.status(unit).await?.resources.cpu_nsec)
     }
 
     /// Archivos `EnvironmentFile=` que systemd cargará al arrancar la unidad (de la unidad y de
@@ -481,7 +547,8 @@ fn parse_main_pid(stdout: &[u8]) -> Option<Option<Pid>> {
 /// interno de systemd (no en el de los argumentos). Cada clave pedida debe aparecer una vez.
 fn parse_status(stdout: &[u8]) -> Option<UnitStatus> {
     let text = std::str::from_utf8(stdout).ok()?;
-    let (mut load, mut active, mut sub, mut pid) = (None, None, None, None);
+    let (mut load, mut active, mut sub, mut pid, mut group) = (None, None, None, None, None);
+    let mut counters: [Option<&str>; RESOURCE_PROPERTIES.len()] = [None; RESOURCE_PROPERTIES.len()];
     for line in text.lines() {
         let (key, value) = line.split_once('=')?;
         let slot = match key {
@@ -489,12 +556,34 @@ fn parse_status(stdout: &[u8]) -> Option<UnitStatus> {
             "ActiveState" => &mut active,
             "SubState" => &mut sub,
             "MainPID" => &mut pid,
-            _ => return None,
+            "ControlGroup" => &mut group,
+            // Opcionales: un systemd antiguo puede no tener alguna.
+            _ => {
+                let index = RESOURCE_PROPERTIES.iter().position(|name| *name == key)?;
+                counters.get_mut(index)?
+            }
         };
         if slot.replace(value).is_some() {
             return None;
         }
     }
+    let counter = |index: usize| {
+        counters
+            .get(index)
+            .copied()
+            .flatten()
+            .and_then(parse_counter)
+    };
+    let resources = UnitResources {
+        memory: counter(0),
+        memory_peak: counter(1),
+        memory_max: counter(2),
+        swap: counter(3),
+        cpu_nsec: counter(4),
+        tasks: counter(5),
+        restarts: counter(6),
+        active_since_us: counter(7).filter(|value| *value > 0),
+    };
     let sub_state = sub?;
     if sub_state.is_empty()
         || !sub_state
@@ -508,6 +597,10 @@ fn parse_status(stdout: &[u8]) -> Option<UnitStatus> {
         active_state: parse_active_state(active?)?,
         sub_state: sub_state.to_owned(),
         main_pid: parse_main_pid(pid?.as_bytes())?,
+        resources,
+        control_group: group
+            .filter(|path| valid_control_group(path))
+            .map(str::to_owned),
     })
 }
 
@@ -658,6 +751,53 @@ mod tests {
                 .unwrap();
         assert_eq!(missing.load_state, LoadState::NotFound);
         assert_eq!(missing.main_pid, None);
+        assert_eq!(missing.resources, UnitResources::default());
+    }
+
+    // Salida real de systemd 255 con los contadores del cgroup (en marcha y parada).
+    #[test]
+    fn contadores_del_cgroup() {
+        let running = parse_status(
+            b"MainPID=2286\nNRestarts=2\nLoadState=loaded\nActiveState=active\nSubState=running\n\
+              ActiveEnterTimestampMonotonic=35279981\nMemoryCurrent=9285632\nMemoryPeak=12783616\n\
+              MemorySwapCurrent=1081344\nMemoryMax=infinity\nCPUUsageNSec=98258438000\nTasksCurrent=3\n\
+              ControlGroup=/user.slice/user-1000.slice/user@1000.service/app.slice/blacksmith@api.service\n",
+        )
+        .unwrap();
+        assert_eq!(
+            running.control_group.as_deref(),
+            Some("/user.slice/user-1000.slice/user@1000.service/app.slice/blacksmith@api.service")
+        );
+        assert!(!valid_control_group("/a/../../etc"));
+        assert!(!valid_control_group("relativa"));
+        assert_eq!(
+            running.resources,
+            UnitResources {
+                memory: Some(9_285_632),
+                memory_peak: Some(12_783_616),
+                memory_max: None,
+                swap: Some(1_081_344),
+                cpu_nsec: Some(98_258_438_000),
+                tasks: Some(3),
+                restarts: Some(2),
+                active_since_us: Some(35_279_981),
+            }
+        );
+        let stopped = parse_status(
+            b"MainPID=0\nNRestarts=0\nLoadState=loaded\nActiveState=inactive\nSubState=dead\n\
+              ActiveEnterTimestampMonotonic=0\nMemoryCurrent=[not set]\nMemoryPeak=[not set]\n\
+              MemorySwapCurrent=[not set]\nMemoryMax=1073741824\nCPUUsageNSec=[not set]\n\
+              TasksCurrent=18446744073709551615\n",
+        )
+        .unwrap();
+        assert_eq!(
+            stopped.resources,
+            UnitResources {
+                memory_max: Some(1_073_741_824),
+                restarts: Some(0),
+                ..UnitResources::default()
+            }
+        );
     }
 
     #[test]
@@ -691,11 +831,11 @@ mod tests {
         assert_eq!(parse_environment_files(b""), Some(vec![]));
         assert_eq!(
             parse_environment_files(
-                b"EnvironmentFiles=/etc/default/anacron (ignore_errors=no)\nEnvironmentFiles=/etc/bbel/env/bbel-api.env (ignore_errors=yes)\n"
+                b"EnvironmentFiles=/etc/default/anacron (ignore_errors=no)\nEnvironmentFiles=/etc/blacksmith/env/blacksmith-api.env (ignore_errors=yes)\n"
             ),
             Some(vec![
                 PathBuf::from("/etc/default/anacron"),
-                PathBuf::from("/etc/bbel/env/bbel-api.env")
+                PathBuf::from("/etc/blacksmith/env/blacksmith-api.env")
             ])
         );
         for raw in [

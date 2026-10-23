@@ -53,6 +53,32 @@ export function formatDateTime(
     return cached('date', options, (locale) => new Intl.DateTimeFormat(locale, options)).format(date);
 }
 
+const DURATION_UNITS: readonly [Intl.NumberFormatOptions['unit'] & string, number][] = [
+    ['day', 24 * 3600],
+    ['hour', 3600],
+    ['minute', 60],
+    ['second', 1],
+];
+
+/**
+ * Duración con las dos unidades más grandes: "3 d 4 h", "2 h 5 min", "42 s". Para tiempos en
+ * marcha y similares (no relativos a ahora).
+ */
+export function formatDuration(totalSeconds: number): string {
+    const seconds = Math.max(0, Math.floor(totalSeconds));
+    const parts: string[] = [];
+    let rest = seconds;
+    for (const [unit, size] of DURATION_UNITS) {
+        const amount = Math.floor(rest / size);
+        if (amount > 0 || (unit === 'second' && parts.length === 0)) {
+            parts.push(formatNumber(amount, { style: 'unit', unit, unitDisplay: 'short' }));
+            rest -= amount * size;
+        }
+        if (parts.length === 2) break;
+    }
+    return parts.join(' ');
+}
+
 const RELATIVE_UNITS: readonly [Intl.RelativeTimeFormatUnit, number][] = [
     ['year', 365 * 24 * 3600],
     ['month', 30 * 24 * 3600],

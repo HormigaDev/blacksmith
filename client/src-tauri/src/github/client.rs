@@ -75,7 +75,7 @@ impl GitHubClient {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let http = reqwest::Client::builder()
             .https_only(https_only)
-            .user_agent(concat!("BBEL-Blacksmith/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("Blacksmith/", env!("CARGO_PKG_VERSION")))
             .timeout(REQUEST_TIMEOUT)
             .redirect(reqwest::redirect::Policy::none())
             .build()
@@ -258,7 +258,7 @@ impl GitHubClient {
 
     /// Añade `key` como *deploy key* de solo lectura del repositorio. Si ya estaba, no hace nada.
     /// Requiere una App con permiso *Administration: write* (solo la propia del usuario: la App
-    /// de BBEL no lo pide); sin él falla con `GitHubPermissionMissing`.
+    /// de Blacksmith no lo pide); sin él falla con `GitHubPermissionMissing`.
     pub async fn add_deploy_key(
         &self,
         token: &str,
@@ -523,7 +523,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn registra_la_llave_de_despliegue_de_solo_lectura() {
-        let key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOk bbel-api@vps";
+        let key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOk blacksmith-api@vps";
         let github = fake(vec![
             (201, r#"{"id":1}"#.into()),
             (
@@ -541,10 +541,10 @@ pub(crate) mod tests {
         .await;
         let client = client(&github);
         client
-            .add_deploy_key("t", "o", "r", "bbel-api", key)
+            .add_deploy_key("t", "o", "r", "blacksmith-api", key)
             .await
             .unwrap();
-        // La App de BBEL (sin Administration) no puede: la interfaz pasa al registro manual.
+        // La App de Blacksmith (sin Administration) no puede: la interfaz pasa al registro manual.
         assert!(matches!(
             client.add_deploy_key("t", "o", "r", "x", key).await,
             Err(CommandError::GitHubPermissionMissing)

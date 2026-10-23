@@ -1,16 +1,16 @@
-//! Plantillas de systemd de los servicios: `bbel@.service` (ejecuta la versión activa) y
-//! `bbel-deploy@.service` (clona, prepara y activa una versión nueva).
+//! Plantillas de systemd de los servicios: `blacksmith@.service` (ejecuta la versión activa) y
+//! `blacksmith-deploy@.service` (clona, prepara y activa una versión nueva).
 //!
 //! El agente nunca ejecuta código de los servicios: lo hacen estas unidades, como un usuario sin
-//! privilegios (`bbel` en el servidor; el propio usuario en modo local) y con su propio sandbox.
+//! privilegios (`blacksmith` en el servidor; el propio usuario en modo local) y con su propio sandbox.
 //! El agente solo deja la especificación, el token de GitHub y, si el servicio la usa, la llave de
 //! despliegue: llegan a la unidad de despliegue como credenciales (`LoadCredential=`, solo
 //! legibles por ella) y sus copias se borran al terminar.
 //!
 //! Sandbox en el servidor: lo hace cumplir el kernel, no un análisis de los comandos (un `cd ..`
 //! o una ruta absoluta dentro de un script lo burlarían). Cada unidad solo puede escribir en su
-//! directorio (`%S/bbel/<nombre>`); el resto del sistema es de solo lectura, `/home` no existe,
-//! y los directorios de los demás servicios, las variables (`%E/bbel`) y los datos del agente
+//! directorio (`%S/blacksmith/<nombre>`); el resto del sistema es de solo lectura, `/home` no existe,
+//! y los directorios de los demás servicios, las variables (`%E/blacksmith`) y los datos del agente
 //! (`%S/blacksmith`, donde vive el token) quedan invisibles. Tampoco ve procesos ajenos.
 //!
 //! En el servidor las instala root una vez (`deploy/systemd/`, generadas con [`render`]); en modo
@@ -20,8 +20,8 @@ use std::{fs, io, path::Path};
 
 use crate::systemd::Scope;
 
-pub const SERVICE_TEMPLATE: &str = "bbel@.service";
-pub const DEPLOY_TEMPLATE: &str = "bbel-deploy@.service";
+pub const SERVICE_TEMPLATE: &str = "blacksmith@.service";
+pub const DEPLOY_TEMPLATE: &str = "blacksmith-deploy@.service";
 /// Binario del agente en el servidor (ver deploy/blacksmith.service).
 pub const SYSTEM_BINARY: &str = "/opt/blacksmith/bin/blacksmith-agent";
 
@@ -29,9 +29,9 @@ pub const SYSTEM_BINARY: &str = "/opt/blacksmith/bin/blacksmith-agent";
 /// con privilegios (espacios de nombres), y allí el servicio ya corre como el propio usuario.
 const HARDENING: &str = "\
 # Solo su directorio: los demás servicios, las variables y los datos del agente no existen.
-TemporaryFileSystem=%S/bbel:ro
-BindPaths=%S/bbel/%i
-InaccessiblePaths=-%E/bbel
+TemporaryFileSystem=%S/blacksmith:ro
+BindPaths=%S/blacksmith/%i
+InaccessiblePaths=-%E/blacksmith
 InaccessiblePaths=-%S/blacksmith
 ProtectProc=invisible
 NoNewPrivileges=yes
@@ -55,7 +55,7 @@ RemoveIPC=yes
 pub fn render(scope: Scope, binary: &str) -> [(&'static str, String); 2] {
     let system = scope == Scope::System;
     let user = if system {
-        "User=bbel\nGroup=bbel\n"
+        "User=blacksmith\nGroup=blacksmith\n"
     } else {
         ""
     };
@@ -66,50 +66,55 @@ pub fn render(scope: Scope, binary: &str) -> [(&'static str, String); 2] {
     } else {
         ""
     };
+    // Contabilidad del cgroup explícita (consumo en la interfaz), sin depender de los valores
+    // por defecto de cada distribución.
     // Directorio de estado y HOME propios: cachés de npm, cargo, pip… quedan dentro. `0711` +
     // `UMask=0077`: nadie más puede listarlo ni leer lo que crea el servicio; solo atravesarlo
     // hasta `public/`, que el runner publica legible para nginx.
     let common = format!(
-        "{user}StateDirectory=bbel/%i\n\
+        "{user}StateDirectory=blacksmith/%i\n\
          StateDirectoryMode=0711\n\
          UMask=0077\n\
-         Environment=HOME=%S/bbel/%i\n\
-         EnvironmentFile=-%E/bbel/env/global.env\n\
-         EnvironmentFile=-%E/bbel/env/services/%i.env\n"
+         CPUAccounting=yes\n\
+         MemoryAccounting=yes\n\
+         TasksAccounting=yes\n\
+         Environment=HOME=%S/blacksmith/%i\n\
+         EnvironmentFile=-%E/blacksmith/env/global.env\n\
+         EnvironmentFile=-%E/blacksmith/env/services/%i.env\n"
     );
     let service = format!(
-        "# Generada por BBEL Blacksmith (agent/src/deploy/units.rs): no la edite a mano.\n\
-         # Servicio desplegado %i: ejecuta la versión activa (%S/bbel/%i/app).\n\
+        "# Generada por Blacksmith (agent/src/deploy/units.rs): no la edite a mano.\n\
+         # Servicio desplegado %i: ejecuta la versión activa (%S/blacksmith/%i/app).\n\
          \n\
          [Unit]\n\
-         Description=BBEL Blacksmith: %i\n\
+         Description=Blacksmith: %i\n\
          After=network-online.target\n\
          Wants=network-online.target\n\
          # Sin una versión desplegada no hay nada que arrancar.\n\
-         ConditionPathIsSymbolicLink=%S/bbel/%i/app\n\
+         ConditionPathIsSymbolicLink=%S/blacksmith/%i/app\n\
          \n\
          [Service]\n\
          Type=exec\n\
          {common}\
-         WorkingDirectory=%S/bbel/%i/app\n\
+         WorkingDirectory=%S/blacksmith/%i/app\n\
          ExecStart={binary} run-service\n\
          Restart=on-failure\n\
          RestartSec=3\n\
          {hardening}{credentials}"
     );
     let deploy = format!(
-        "# Generada por BBEL Blacksmith (agent/src/deploy/units.rs): no la edite a mano.\n\
+        "# Generada por Blacksmith (agent/src/deploy/units.rs): no la edite a mano.\n\
          # Despliegue de %i: clona la rama, ejecuta la preparación y activa la versión.\n\
          \n\
          [Unit]\n\
-         Description=BBEL Blacksmith: despliegue de %i\n\
+         Description=Blacksmith: despliegue de %i\n\
          After=network-online.target\n\
          Wants=network-online.target\n\
          \n\
          [Service]\n\
          Type=oneshot\n\
          {common}\
-         WorkingDirectory=%S/bbel/%i\n\
+         WorkingDirectory=%S/blacksmith/%i\n\
          LoadCredential=spec:%S/blacksmith/deployments/%i/spec.json\n\
          LoadCredential=github-token:%S/blacksmith/deployments/%i/github-token\n\
          LoadCredential=deploy-key:%S/blacksmith/deployments/%i/deploy-key\n\
@@ -161,7 +166,7 @@ mod tests {
             assert!(!unit.contains("User="));
             assert!(!unit.contains("ProtectSystem"));
             assert!(unit.contains("/home/ana/bin/blacksmith-agent run-"));
-            assert!(unit.contains("EnvironmentFile=-%E/bbel/env/services/%i.env"));
+            assert!(unit.contains("EnvironmentFile=-%E/blacksmith/env/services/%i.env"));
         }
         assert!(
             deploy
@@ -173,10 +178,12 @@ mod tests {
     fn en_el_servidor_cada_servicio_solo_ve_su_directorio() {
         let [(_, service), (_, deploy)] = render(Scope::System, SYSTEM_BINARY);
         for unit in [&service, &deploy] {
-            assert!(unit.contains("User=bbel\n"));
-            assert!(unit.contains("TemporaryFileSystem=%S/bbel:ro\nBindPaths=%S/bbel/%i\n"));
+            assert!(unit.contains("User=blacksmith\n"));
+            assert!(
+                unit.contains("TemporaryFileSystem=%S/blacksmith:ro\nBindPaths=%S/blacksmith/%i\n")
+            );
             assert!(unit.contains("InaccessiblePaths=-%S/blacksmith\n"));
-            assert!(unit.contains("InaccessiblePaths=-%E/bbel\n"));
+            assert!(unit.contains("InaccessiblePaths=-%E/blacksmith\n"));
             assert!(unit.contains("ProtectSystem=strict\n"));
             assert!(unit.contains("ProtectHome=yes\n"));
             assert!(unit.contains("ProtectProc=invisible\n"));

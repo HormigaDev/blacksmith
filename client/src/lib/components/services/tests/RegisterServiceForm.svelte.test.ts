@@ -16,7 +16,7 @@ describe('RegisterServiceForm', () => {
         await render(RegisterServiceForm, { onSubmit });
         await identifier().fill(' mi-api ');
         await expect
-            .element(page.getByText('Minúsculas, dígitos y guiones. Define la unidad bbel-mi-api.service.'))
+            .element(page.getByText('Minúsculas, dígitos y guiones. Define la unidad blacksmith-mi-api.service.'))
             .toBeVisible();
         await displayName().fill('API de pagos');
         await page.getByRole('textbox', { name: /^Descripción/ }).fill('  Cobros.  ');

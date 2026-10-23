@@ -1,5 +1,5 @@
 //! Configuración de nginx de un sitio: la plantilla del tipo de proyecto (el cuerpo del `server`,
-//! editable en `%E/bbel/nginx/templates/`) dentro de un envoltorio fijo que genera el agente:
+//! editable en `%E/blacksmith/nginx/templates/`) dentro de un envoltorio fijo que genera el agente:
 //! puertos, desafío ACME, redirección a HTTPS, certificado, TLS, cabeceras de seguridad y logs.
 //!
 //! Las variables (`{{root}}`, `{{upstream}}`…) solo reciben valores ya validados (dominios,
@@ -7,7 +7,7 @@
 
 use std::{fmt::Write as _, io, path::Path};
 
-use shared::SiteTemplate;
+use shared::{SiteRoute, SiteTemplate};
 
 /// Plantillas que trae el agente (las mismas que instala `deploy/nginx/install.sh`). Si el
 /// administrador tiene una propia en el directorio de plantillas, se usa esa.
@@ -23,7 +23,7 @@ fn embedded(template: SiteTemplate) -> &'static str {
 }
 
 /// Webroot de los desafíos de Let's Encrypt (lo crea `deploy/nginx/install.sh`).
-pub const ACME_ROOT: &str = "/var/lib/bbel-acme";
+pub const ACME_ROOT: &str = "/var/lib/blacksmith-acme";
 
 #[derive(Debug, thiserror::Error)]
 pub enum TemplateError {
@@ -68,6 +68,8 @@ pub struct SiteVars {
     pub root: Option<String>,
     /// HTTPS: certificado de Let's Encrypt ya emitido para `domains[0]`.
     pub tls: bool,
+    /// Rutas hacia otros puertos (ya validadas): van antes del cuerpo de la plantilla.
+    pub routes: Vec<SiteRoute>,
 }
 
 impl SiteVars {
@@ -119,28 +121,69 @@ pub fn render_body(text: &str, vars: &SiteVars) -> Result<String, TemplateError>
     Ok(out)
 }
 
+/// Un `location ^~` por ruta: gana a las expresiones regulares de la plantilla (p. ej. las de
+/// archivos estáticos), así `/api/app.js` nunca se busca como archivo. `proxy_pass` sin URI: el
+/// servicio recibe la ruta completa, con su prefijo.
+fn render_routes(routes: &[SiteRoute]) -> String {
+    let mut out = String::new();
+    for route in routes {
+        let (connections, websocket) = if route.websocket {
+            (200, "    include snippets/blacksmith/websocket.conf;\n")
+        } else {
+            (100, "")
+        };
+        let _ = write!(
+            out,
+            "location ^~ {path} {{\n    limit_conn blacksmith_conn {connections};\n    \
+             include snippets/blacksmith/proxy.conf;\n{websocket}    \
+             proxy_pass http://127.0.0.1:{port};\n}}\n\n",
+            path = route.path,
+            port = route.port,
+        );
+    }
+    out
+}
+
+/// Prefijos que la plantilla ya tiene como `location` (`location /api/`, `location ^~ /ws`,
+/// `location = /index.html`): una ruta con el mismo prefijo daría un `location` duplicado.
+pub fn template_locations(body: &str) -> Vec<String> {
+    body.lines()
+        .filter_map(|line| line.trim().strip_prefix("location "))
+        .filter_map(|rest| {
+            let rest = rest.trim_end_matches('{').trim();
+            let path = rest
+                .strip_prefix("^~ ")
+                .or_else(|| rest.strip_prefix("= "))
+                .unwrap_or(rest)
+                .trim();
+            // Las expresiones regulares (`~`, `~*`) no chocan: se dejan.
+            path.starts_with('/').then(|| path.to_owned())
+        })
+        .collect()
+}
+
 /// Configuración completa del sitio: el envoltorio con el cuerpo ya renderizado.
 pub fn render_site(body: &str, vars: &SiteVars) -> String {
     let service = &vars.service;
     let names = vars.domains.join(" ");
     let primary = vars.primary();
-    let indented = indent(body);
+    let indented = indent(&format!("{}{body}", render_routes(&vars.routes)));
     let mut out = String::new();
     let _ = write!(
         out,
-        "# Generado por BBEL Blacksmith: servicio «{service}», plantilla «{template}». No lo edite: se\n\
+        "# Generado por Blacksmith: servicio «{service}», plantilla «{template}». No lo edite: se\n\
          # sustituye al guardar el sitio. Para cambiar el comportamiento edite la plantilla\n\
-         # (/etc/bbel/nginx/templates/{template}.conf o la de su modo local).\n\n",
+         # (/etc/blacksmith/nginx/templates/{template}.conf o la de su modo local).\n\n",
         template = vars.template.file_stem(),
     );
     let logs = format!(
-        "    access_log /var/log/nginx/bbel-{service}.access.log;\n    \
-         error_log /var/log/nginx/bbel-{service}.error.log warn;\n"
+        "    access_log /var/log/nginx/blacksmith-{service}.access.log;\n    \
+         error_log /var/log/nginx/blacksmith-{service}.error.log warn;\n"
     );
     let _ = write!(
         out,
         "server {{\n    listen 80;\n    listen [::]:80;\n    server_name {names};\n{logs}    \
-         include snippets/bbel/acme.conf;\n"
+         include snippets/blacksmith/acme.conf;\n"
     );
     if vars.tls {
         let _ = write!(
@@ -150,13 +193,13 @@ pub fn render_site(body: &str, vars: &SiteVars) -> String {
              server_name {names};\n{logs}\n    \
              ssl_certificate /etc/letsencrypt/live/{primary}/fullchain.pem;\n    \
              ssl_certificate_key /etc/letsencrypt/live/{primary}/privkey.pem;\n    \
-             include snippets/bbel/tls.conf;\n    include snippets/bbel/security-headers.conf;\n\n\
+             include snippets/blacksmith/tls.conf;\n    include snippets/blacksmith/security-headers.conf;\n\n\
              {indented}}}\n"
         );
     } else {
         let _ = write!(
             out,
-            "    include snippets/bbel/security-headers.conf;\n\n{indented}}}\n"
+            "    include snippets/blacksmith/security-headers.conf;\n\n{indented}}}\n"
         );
     }
     out
@@ -186,8 +229,9 @@ mod tests {
             upstream: template.proxies().then(|| "127.0.0.1:3000".into()),
             root: template
                 .serves_files()
-                .then(|| "/var/lib/bbel/web/public/current".into()),
+                .then(|| "/var/lib/blacksmith/web/public/current".into()),
             tls,
+            routes: Vec::new(),
         }
     }
 
@@ -205,8 +249,8 @@ mod tests {
                 );
                 let site = render_site(&body, &vars);
                 assert!(site.contains("server_name example.com www.example.com;"));
-                assert!(site.contains("include snippets/bbel/acme.conf;"));
-                assert!(site.contains("include snippets/bbel/security-headers.conf;"));
+                assert!(site.contains("include snippets/blacksmith/acme.conf;"));
+                assert!(site.contains("include snippets/blacksmith/security-headers.conf;"));
                 assert_eq!(
                     site.contains(
                         "ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;"
@@ -221,6 +265,51 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn rutas_antes_de_la_plantilla() {
+        let mut site = vars(SiteTemplate::Spa, true);
+        site.routes = vec![
+            SiteRoute {
+                path: "/api/".into(),
+                port: 3000,
+                websocket: false,
+            },
+            SiteRoute {
+                path: "/socket.io/".into(),
+                port: 3001,
+                websocket: true,
+            },
+        ];
+        let body = render_body(embedded(SiteTemplate::Spa), &site).unwrap();
+        let full = render_site(&body, &site);
+        // Con HTTPS, el servidor HTTP solo redirige: las rutas van en el de HTTPS.
+        let rendered = &full[full.find("listen 443").unwrap()..];
+        assert!(!full[..full.find("listen 443").unwrap()].contains("/api/"));
+        let api = rendered.find("location ^~ /api/ {").unwrap();
+        let socket = rendered.find("location ^~ /socket.io/ {").unwrap();
+        let spa = rendered.find("location / {").unwrap();
+        assert!(api < socket && socket < spa, "{rendered}");
+        assert!(rendered.contains("proxy_pass http://127.0.0.1:3000;"));
+        assert!(rendered.contains("proxy_pass http://127.0.0.1:3001;"));
+        // Solo la de WebSocket amplía los tiempos.
+        assert_eq!(
+            rendered
+                .matches("include snippets/blacksmith/websocket.conf;")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn locations_de_la_plantilla() {
+        let body = "location ^~ /api/ {\n}\nlocation /ws {\n}\nlocation = /index.html {\n}\n\
+                    location ~* \\.(?:css|js)$ {\n}\nlocation / {\n}\n";
+        assert_eq!(
+            template_locations(body),
+            ["/api/", "/ws", "/index.html", "/"]
+        );
     }
 
     #[test]
@@ -245,7 +334,7 @@ mod tests {
                 &static_site
             )
             .unwrap(),
-            "# usa {{upstream}} o {{root}}\nroot /var/lib/bbel/web/public/current;\n"
+            "# usa {{upstream}} o {{root}}\nroot /var/lib/blacksmith/web/public/current;\n"
         );
     }
 

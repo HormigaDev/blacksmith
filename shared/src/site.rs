@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Tipo de proyecto: elige la plantilla (`/etc/bbel/nginx/templates/<plantilla>.conf`).
+/// Tipo de proyecto: elige la plantilla (`/etc/blacksmith/nginx/templates/<plantilla>.conf`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SiteTemplate {
@@ -71,6 +71,23 @@ pub struct SiteConfig {
     pub https: bool,
     /// Para los avisos de caducidad de Let's Encrypt (opcional).
     pub email: Option<String>,
+    /// Rutas que van a otros puertos de este servidor (p. ej. `/api/` → 3000, `/socket.io/` →
+    /// 3001 con WebSocket), además de lo que sirve la plantilla. Van antes que ella.
+    #[serde(default)]
+    pub routes: Vec<SiteRoute>,
+}
+
+/// Una ruta del sitio hacia un puerto local: todo lo que empiece por `path` va a
+/// `127.0.0.1:<port>`, con la ruta completa (el prefijo no se quita).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiteRoute {
+    /// Prefijo, p. ej. `/api/` o `/socket.io/`.
+    pub path: String,
+    pub port: u16,
+    /// Conexiones largas (WebSocket, SSE): hasta una hora y sin búfer.
+    #[serde(default)]
+    pub websocket: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -116,6 +133,11 @@ mod tests {
                 port: Some(3000),
                 https: true,
                 email: None,
+                routes: vec![SiteRoute {
+                    path: "/socket.io/".into(),
+                    port: 3001,
+                    websocket: true,
+                }],
             },
             tls: TlsStatus::Issuing,
             tls_detail: None,

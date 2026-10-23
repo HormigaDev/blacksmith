@@ -12,7 +12,13 @@ import {
 
 describe('parseServiceList', () => {
     test('acepta el JSON del agente y rechaza formas inesperadas', () => {
-        const service = { name: 'api', displayName: 'API', description: '', unit: 'bbel-api.service', createdAt: 1 };
+        const service = {
+            name: 'api',
+            displayName: 'API',
+            description: '',
+            unit: 'blacksmith-api.service',
+            createdAt: 1,
+        };
         expect(parseServiceList([service])).toEqual([service]);
         expect(() => parseServiceList({})).toThrow(TypeError);
         expect(() => parseServiceList([{ ...service, createdAt: '1' }])).toThrow(TypeError);
@@ -54,7 +60,7 @@ test('SERVICE_NAME_PATTERN: mismas reglas que el agente', () => {
 describe('parseServiceStatus', () => {
     const status = {
         name: 'api',
-        unit: 'bbel-api.service',
+        unit: 'blacksmith-api.service',
         loadState: 'loaded',
         activeState: 'active',
         subState: 'running',
@@ -63,6 +69,17 @@ describe('parseServiceStatus', () => {
         deployed: true,
         release: 'r1800000000-000000000',
         previousRelease: null,
+        resources: {
+            memoryBytes: 1024,
+            memoryPeakBytes: 2048,
+            memoryLimitBytes: null,
+            swapBytes: 0,
+            cpuPercent: 1.5,
+            tasks: 3,
+            restarts: 0,
+            uptimeSecs: 60,
+        },
+        host: { cpuCores: 4, memoryBytes: 8192, swapBytes: 0 },
     };
     test('acepta el JSON del agente', () => {
         expect(parseServiceStatus(status)).toEqual(status);
@@ -73,6 +90,10 @@ describe('parseServiceStatus', () => {
         expect(() => parseServiceStatus({ ...status, loadState: 'otro' })).toThrow(TypeError);
         expect(() => parseServiceStatus({ ...status, deployed: undefined })).toThrow(TypeError);
         expect(() => parseServiceStatus({ ...status, release: 1 })).toThrow(TypeError);
+        expect(() => parseServiceStatus({ ...status, resources: { ...status.resources, tasks: '3' } })).toThrow(
+            TypeError,
+        );
+        expect(() => parseServiceStatus({ ...status, host: null })).toThrow(TypeError);
         expect(() => parseServiceStatus({ ...status, metrics: { rssBytes: '1' } })).toThrow(TypeError);
     });
 });
@@ -83,7 +104,7 @@ describe('parseServiceDeployment y parseServiceEnvironment', () => {
             name: 'api',
             repository: { owner: 'o', name: 'r', branch: 'main' },
             access: 'account',
-            workingDirectory: '/srv/bbel/api',
+            workingDirectory: '/srv/blacksmith/api',
             setupCommands: ['npm ci'],
             startCommand: 'npm start',
             publishDir: null,
@@ -103,6 +124,7 @@ describe('parseServiceDeployment y parseServiceEnvironment', () => {
             port: null,
             https: true,
             email: null,
+            routes: [{ path: '/api/', port: 3000, websocket: false }],
             tls: 'issuing',
             tlsDetail: null,
             configPath: '/var/lib/blacksmith/nginx/sites/web.conf',
@@ -112,13 +134,17 @@ describe('parseServiceDeployment y parseServiceEnvironment', () => {
         expect(parseSite(null)).toBeNull();
         expect(() => parseSite({ ...site, template: 'php' })).toThrow(TypeError);
         expect(() => parseSite({ ...site, tls: 'maybe' })).toThrow(TypeError);
+        expect(() => parseSite({ ...site, routes: [{ path: '/api/', port: '3000' }] })).toThrow(TypeError);
+        // Agente sin rutas.
+        const { routes: _routes, ...legacy } = site;
+        expect(parseSite(legacy)?.routes).toEqual([]);
     });
 
     test('variables del servicio', () => {
         const env = {
             name: 'api',
-            unit: 'bbel-api.service',
-            file: '/etc/bbel/env/bbel-api.env',
+            unit: 'blacksmith-api.service',
+            file: '/etc/blacksmith/env/blacksmith-api.env',
             loadedByUnit: true,
             globalLoadedByUnit: false,
             variables: [{ key: 'A', value: '1' }],

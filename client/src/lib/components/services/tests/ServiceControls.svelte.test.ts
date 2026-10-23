@@ -8,7 +8,7 @@ import ServiceControls from '../ServiceControls.svelte';
 
 const status = (overrides: Partial<ServiceStatus>): ServiceStatus => ({
     name: 'api',
-    unit: 'bbel-api.service',
+    unit: 'blacksmith-api.service',
     loadState: 'loaded',
     activeState: 'inactive',
     subState: 'dead',
@@ -17,6 +17,17 @@ const status = (overrides: Partial<ServiceStatus>): ServiceStatus => ({
     deployed: true,
     release: 'r1800000000-000000000',
     previousRelease: null,
+    resources: {
+        memoryBytes: null,
+        memoryPeakBytes: null,
+        memoryLimitBytes: null,
+        swapBytes: null,
+        cpuPercent: null,
+        tasks: null,
+        restarts: null,
+        uptimeSecs: null,
+    },
+    host: { cpuCores: 4, memoryBytes: 8 * 1024 ** 3, swapBytes: 0 },
     ...overrides,
 });
 
@@ -51,12 +62,23 @@ describe('ServiceControls', () => {
                 activeState: 'active',
                 subState: 'running',
                 pid: 42,
-                metrics: { rssBytes: 52_428_800, rssMb: 50, cpuPercent: 12.5 },
+                // El proceso principal (npm) usa poco; el servicio entero, más: se muestra el servicio.
+                metrics: { rssBytes: 10_485_760, rssMb: 10, cpuPercent: 1 },
+                resources: {
+                    memoryBytes: 52_428_800,
+                    memoryPeakBytes: null,
+                    memoryLimitBytes: null,
+                    swapBytes: 0,
+                    cpuPercent: 12.5,
+                    tasks: 9,
+                    restarts: 0,
+                    uptimeSecs: 30,
+                },
             }),
             onAction,
         });
         await expect.element(page.getByText('Activo')).toBeVisible();
-        await expect.element(page.getByText(/CPU 12,5 %/)).toBeVisible();
+        await expect.element(page.getByText('CPU 12,5 % · Memoria 50 MB')).toBeVisible();
         await button('Detener').click();
         expect(onAction).not.toHaveBeenCalled();
         await page.getByRole('alertdialog').getByRole('button', { name: 'Detener' }).click();

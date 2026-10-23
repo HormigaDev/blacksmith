@@ -26,9 +26,9 @@ El agente corre como el usuario sin privilegios `blacksmith` y con `NoNewPrivile
 modo que no puede convertirse en root de ninguna forma. Los permisos para gestionar servicios
 se los concede **polkit**, con una regla que solo le permite:
 
-- `start`, `stop` y `restart` de `bbel@<servicio>.service` (los servicios),
-- `start` y `stop` de `bbel-deploy@<servicio>.service` (sus despliegues),
-- `start` de `bbel-nginx.service` y de `bbel-certbot@<dominio>.service` (aplicar la
+- `start`, `stop` y `restart` de `blacksmith@<servicio>.service` (los servicios),
+- `start` y `stop` de `blacksmith-deploy@<servicio>.service` (sus despliegues),
+- `start` de `blacksmith-nginx.service` y de `blacksmith-certbot@<dominio>.service` (aplicar la
   configuración de nginx y pedir certificados; ver «Sitios web con nginx»).
 
 Cualquier otra cosa que pida (otras unidades como `ssh` o el propio `nginx`, `enable`, `mask`,
@@ -56,32 +56,32 @@ existe (sin ningún efecto) y registra el resultado. Si falta la regla, verás e
 polkit NO autoriza al agente: iniciar, parar o reiniciar servicios fallará con SYSTEMD_PERMISSION_DENIED…
 ```
 
-y, si está bien, `polkit autoriza al agente a gestionar sus servicios (bbel-*.service)`.
+y, si está bien, `polkit autoriza al agente a gestionar sus servicios (blacksmith-*.service)`.
 
 **No use sudoers** (`/etc/sudoers.d/…`) para esto:
 
 - `NOPASSWD: /bin/systemctl` equivale a dar root al agente: `systemctl link` o `systemctl edit`
   bastan para ejecutar cualquier cosa como root.
-- Los comodines de sudoers coinciden con espacios: `systemctl start bbel-*` también permite
-  `systemctl start bbel-x ssh.service`.
+- Los comodines de sudoers coinciden con espacios: `systemctl start blacksmith-*` también permite
+  `systemctl start blacksmith-x ssh.service`.
 - Además, no funciona: `NoNewPrivileges=yes` impide que `sudo` eleve privilegios, y quitarlo
   obligaría a desmontar buena parte del endurecimiento de `deploy/blacksmith.service`.
 
 ## Servicios: plantillas de systemd (obligatorio en cada servidor)
 
 El agente **nunca ejecuta el código de los servicios**. Lo hacen dos plantillas de systemd, como
-el usuario sin privilegios `bbel`:
+el usuario sin privilegios `blacksmith`:
 
-- `bbel-deploy@<servicio>.service`: clona la rama por HTTPS, ejecuta los comandos de
+- `blacksmith-deploy@<servicio>.service`: clona la rama por HTTPS, ejecuta los comandos de
   preparación y activa la versión de forma atómica. Si algo falla, la versión anterior sigue en
   marcha.
-- `bbel@<servicio>.service`: ejecuta la versión activa con su comando de arranque.
+- `blacksmith@<servicio>.service`: ejecuta la versión activa con su comando de arranque.
 
 **Sandbox.** Los comandos no pueden salir del directorio del servicio, y no porque se analicen
 (un `cd ..` o una ruta absoluta dentro de un script lo burlarían): lo impide el kernel. Cada
-unidad solo puede escribir en `/var/lib/bbel/<servicio>`. El resto del sistema es de solo
+unidad solo puede escribir en `/var/lib/blacksmith/<servicio>`. El resto del sistema es de solo
 lectura y `/home` no existe. Quedan invisibles los directorios de los demás servicios, las
-variables (`/etc/bbel`), los datos del agente (`/var/lib/blacksmith`, donde vive el token de
+variables (`/etc/blacksmith`), los datos del agente (`/var/lib/blacksmith`, donde vive el token de
 GitHub) y los procesos ajenos. Las herramientas (`node`, `cargo`, `python`…) deben estar
 instaladas en el sistema; sus cachés (`$HOME`) quedan dentro del directorio del servicio.
 
@@ -92,7 +92,7 @@ activa y cuál la anterior, y el runner nunca borra la anterior al podar (se con
 compilar nada y reinicia el servicio; repetirlo vuelve a la otra. Si una versión nueva queda
 activa pero el servicio no arranca, el rollback está disponible igualmente.
 
-**Sitios estáticos.** Con una *carpeta pública* (p. ej. `dist`), tras la preparación el runner la
+**Sitios estáticos.** Con una _carpeta pública_ (p. ej. `dist`), tras la preparación el runner la
 copia a `public/<versión>` con permisos de lectura (`0755`/`0644`, sin enlaces que salgan del
 repositorio) y `public/current` apunta a la de la versión activa (también en un rollback). El
 directorio del servicio es `0711` y las unidades usan `UMask=0077`: nginx solo puede leer
@@ -103,17 +103,17 @@ necesita comando de arranque: no hay proceso, lo sirve nginx.
 iniciaron o desplegaron, y no se detuvieron a mano) y los arranca al iniciarse, p. ej. tras
 reiniciar el servidor.
 
-Cada servicio vive en `/var/lib/bbel/<servicio>` (`releases/` + el enlace `app` a la activa; se
-conservan las 3 últimas). Variables: `/etc/bbel/env/global.env` (comunes) y
-`/etc/bbel/env/services/<servicio>.env` (ganan las del servicio); se aplican al reiniciar. La
+Cada servicio vive en `/var/lib/blacksmith/<servicio>` (`releases/` + el enlace `app` a la activa; se
+conservan las 3 últimas). Variables: `/etc/blacksmith/env/global.env` (comunes) y
+`/etc/blacksmith/env/services/<servicio>.env` (ganan las del servicio); se aplican al reiniciar. La
 especificación de cada despliegue queda en `/var/lib/blacksmith/deployments/<servicio>` (`0600`)
 y llega a la unidad como credencial, junto con una copia del token que se borra al terminar.
 
 Instalación (como root, una vez por servidor; requiere `git`):
 
 ```sh
-useradd --system --home-dir /var/lib/bbel --no-create-home --shell /usr/sbin/nologin bbel
-install -m 0644 "deploy/systemd/bbel@.service" "deploy/systemd/bbel-deploy@.service" /etc/systemd/system/
+useradd --system --home-dir /var/lib/blacksmith --no-create-home --shell /usr/sbin/nologin blacksmith
+install -m 0644 "deploy/systemd/blacksmith@.service" "deploy/systemd/blacksmith-deploy@.service" /etc/systemd/system/
 systemctl daemon-reload
 sh deploy/systemd/verify-sandbox.sh   # comprueba el sandbox con el systemd real
 ```
@@ -124,7 +124,7 @@ comprueba que las de `deploy/systemd/` están al día.
 **Modo local** (para probar sin VPS): con `BLACKSMITH_SYSTEMD_SCOPE=user` (por defecto en
 desarrollo) los servicios se despliegan en el systemd de tu usuario, sin root: el agente instala
 las plantillas en `~/.config/systemd/user` al arrancar y todo vive en `~/.local/state` y
-`~/.config/bbel`. Los servicios corren como tu usuario y **sin el sandbox del servidor**: el
+`~/.config/blacksmith`. Los servicios corren como tu usuario y **sin el sandbox del servidor**: el
 systemd de usuario no puede aplicarlo sin privilegios. Úsalo con repositorios en los que confíes.
 
 ## Conectar GitHub
@@ -140,8 +140,8 @@ puede apagar. Por defecto no hay llaves de despliegue ni pasos en GitHub por ser
   argumentos ni en el entorno. El token solo puede **leer contenido** de los repositorios donde
   instalaste la App. Para retirarlo: desconecta GitHub o revoca la App en GitHub.
 
-La autorización del cliente es con *Device Flow*: no hay que pegar tokens ni guardar secretos en
-el cliente (el *Client ID* es público). El token queda cifrado en la bóveda de credenciales del
+La autorización del cliente es con _Device Flow_: no hay que pegar tokens ni guardar secretos en
+el cliente (el _Client ID_ es público). El token queda cifrado en la bóveda de credenciales del
 equipo (clave maestra en el llavero del sistema).
 
 ### Con la App del proyecto (por defecto)
@@ -155,15 +155,15 @@ equipo (clave maestra en el llavero del sistema).
 
 1. En GitHub: **Settings → Developer settings → GitHub Apps → New GitHub App**.
 2. **GitHub App name**: único en GitHub. **Homepage URL**: cualquiera.
-3. **Identifying and authorizing users**: *Callback URL* vacío; **desmarca** *Expire user
-   authorization tokens* (el servidor usa el token sin poder renovarlo); **marca** *Enable
-   Device Flow*.
-4. **Webhook**: desmarca *Active*.
-5. **Repository permissions**: solo *Contents* → **Read-only** (*Metadata* → Read-only se añade
+3. **Identifying and authorizing users**: _Callback URL_ vacío; **desmarca** _Expire user
+   authorization tokens_ (el servidor usa el token sin poder renovarlo); **marca** _Enable
+   Device Flow_.
+4. **Webhook**: desmarca _Active_.
+5. **Repository permissions**: solo _Contents_ → **Read-only** (_Metadata_ → Read-only se añade
    solo). Ningún otro permiso.
-6. **Where can this GitHub App be installed?**: *Only on this account* → **Create GitHub App**.
+6. **Where can this GitHub App be installed?**: _Only on this account_ → **Create GitHub App**.
 7. Anota el **Client ID** (empieza por `Iv`) y el **slug** (la última parte de
-   `https://github.com/apps/<slug>`). No hace falta *client secret* ni *private key*.
+   `https://github.com/apps/<slug>`). No hace falta _client secret_ ni _private key_.
 8. En Blacksmith: **GitHub** → **Usar mi propia GitHub App** → pega ambos → **Guardar** →
    **Conectar con GitHub**.
 
@@ -174,25 +174,25 @@ que un servicio no dependa de ninguna cuenta, elige **Acceso → Llave de despli
 Despliegue: el servidor genera una llave ed25519 propia (la privada nunca sale de él) que solo
 puede **leer ese repositorio**, y la clona por SSH con las llaves de host de github.com fijadas.
 
-La llave hay que añadirla al repositorio una vez (*Settings → Deploy keys*, sin *Allow write
-access*). Blacksmith te enseña los pasos y abre la página.
+La llave hay que añadirla al repositorio una vez (_Settings → Deploy keys_, sin _Allow write
+access_). Blacksmith te enseña los pasos y abre la página.
 
 **Registro en un clic (solo con tu propia App).** La API de GitHub solo deja añadir deploy keys
-con el permiso *Administration: Read and write*, que también permite crear y **borrar
-repositorios**, cambiar su configuración y sus colaboradores. Por eso la App de BBEL **nunca lo
+con el permiso _Administration: Read and write_, que también permite crear y **borrar
+repositorios**, cambiar su configuración y sus colaboradores. Por eso la App de blacksmith **nunca lo
 pide**: si algún día se viera comprometida, tus repositorios no quedarían a merced del atacante;
 solo podría leer los que autorizaste. Si quieres el registro en un clic, hazlo con tu propia App
-(apartado anterior) y añádele *Administration: Read and write*; tras guardar, acepta el permiso
-nuevo en *Settings → Applications → Installed GitHub Apps → tu App → Review request*. Así ese
+(apartado anterior) y añádele _Administration: Read and write_; tras guardar, acepta el permiso
+nuevo en _Settings → Applications → Installed GitHub Apps → tu App → Review request_. Así ese
 permiso solo lo tiene una App que controlas tú.
 
 ### Publicar la App del proyecto (mantenedores)
 
 La App por defecto (`DEFAULT_APP` en `client/src-tauri/src/github/mod.rs`) se configura igual
-que en el apartado anterior, con *Where can this GitHub App be installed?* → **Any account**
-(Advanced → *Make public* si ya existe). Solo *Contents: Read-only*.
+que en el apartado anterior, con _Where can this GitHub App be installed?_ → **Any account**
+(Advanced → _Make public_ si ya existe). Solo _Contents: Read-only_.
 
-Para revocar la autorización: GitHub → *Settings → Applications → Authorized GitHub Apps*.
+Para revocar la autorización: GitHub → _Settings → Applications → Authorized GitHub Apps_.
 
 ## Sitios web con nginx
 
@@ -201,27 +201,43 @@ seguridad y límites. En la pestaña **Web** de cada servicio eliges el tipo de 
 dominios, el puerto del servicio y si va por HTTPS; el agente genera la configuración, la prueba
 con `nginx -t` y la aplica. Si nginx la rechaza, se queda la anterior.
 
-| Tipo | Para | Qué hace |
-|---|---|---|
-| Sitio estático | HTML/CSS/JS | Sirve la carpeta pública; recursos con caché, archivos ocultos bloqueados. Sin proceso. |
-| SPA | React, Vue, Svelte, Angular… | Como el anterior, y las rutas del cliente devuelven `index.html` (sin caché). |
-| Aplicación web | SSR, Django, Rails, Express… | Proxy al servicio con WebSocket transparente. |
-| API | REST, GraphQL | Proxy con límite de peticiones por IP, cuerpos de 10 MB y tiempos cortos. |
-| WebSocket o eventos | Socket.IO, SSE, juegos | Conexiones de hasta una hora, sin búfer. |
-| Frontend + API | SPA + backend | La carpeta pública como SPA; `/api/` y `/ws` al servicio. |
+| Tipo                | Para                         | Qué hace                                                                                |
+| ------------------- | ---------------------------- | --------------------------------------------------------------------------------------- |
+| Sitio estático      | HTML/CSS/JS                  | Sirve la carpeta pública; recursos con caché, archivos ocultos bloqueados. Sin proceso. |
+| SPA                 | React, Vue, Svelte, Angular… | Como el anterior, y las rutas del cliente devuelven `index.html` (sin caché).           |
+| Aplicación web      | SSR, Django, Rails, Express… | Proxy al servicio con WebSocket transparente.                                           |
+| API                 | REST, GraphQL                | Proxy con límite de peticiones por IP, cuerpos de 10 MB y tiempos cortos.               |
+| WebSocket o eventos | Socket.IO, SSE, juegos       | Conexiones de hasta una hora, sin búfer.                                                |
+| Frontend + API      | SPA + backend                | La carpeta pública como SPA; `/api/` y `/ws` al servicio.                               |
+
+**Rutas hacia otros puertos.** Para proyectos con varios procesos (p. ej. frontend + API +
+WebSocket), cada sitio admite hasta 20 rutas que nginx reenvía a otro puerto local antes que la
+plantilla. Por ejemplo, con la plantilla SPA:
+
+| Ruta          | Puerto | WebSocket |
+| ------------- | ------ | --------- |
+| `/api/`       | 3000   | no        |
+| `/socket.io/` | 3001   | sí        |
+
+El resto (`/`) lo sirve la plantilla. Cada ruta es un prefijo (`location ^~`), con las mismas
+cabeceras de proxy y, si se marca, la mejora a WebSocket y conexiones largas. No se permiten `/`,
+`/.well-known` (desafío de Let's Encrypt), puertos por debajo de 1024 ni el del agente, y el
+agente rechaza las que ya define la plantilla (p. ej. `/api/` en Frontend + API). Los demás
+procesos se arrancan como servicios propios, cada uno con su puerto.
 
 **HTTPS.** El sitio se publica primero por HTTP (con el desafío de Let's Encrypt) y el
-certificado se pide en segundo plano con certbot (*webroot*: nginx no se detiene). Con él, el
-sitio pasa a HTTPS (TLS 1.2/1.3, perfil *intermediate* de Mozilla), con redirección desde HTTP y
+certificado se pide en segundo plano con certbot (_webroot_: nginx no se detiene). Con él, el
+sitio pasa a HTTPS (TLS 1.2/1.3, perfil _intermediate_ de Mozilla), con redirección desde HTTP y
 HSTS. Si falla (DNS que aún no apunta aquí, puertos 80/443 cerrados), sigue por HTTP, se ve el
 motivo y se puede reintentar. La renovación es la del temporizador del paquete certbot, que
 recarga nginx al renovar.
 
 **Seguridad.**
+
 - El agente solo genera configuración a partir de valores validados (dominios, un puerto y rutas
   suyas): la API nunca acepta texto de configuración de nginx.
-- Lo único que corre como root por cuenta del agente son dos unidades fijas: `bbel-nginx.service`
-  (`nginx -t` y recarga) y `bbel-certbot@<dominio>.service` (pedir un certificado). polkit solo
+- Lo único que corre como root por cuenta del agente son dos unidades fijas: `blacksmith-nginx.service`
+  (`nginx -t` y recarga) y `blacksmith-certbot@<dominio>.service` (pedir un certificado). polkit solo
   le deja `start` de esas dos; nunca parar o tocar nginx ni ninguna otra unidad.
 - Un dominio pertenece a un solo servicio. Una petición a un host desconocido se cierra sin
   respuesta (y por HTTPS, sin presentar certificado).
@@ -230,11 +246,11 @@ recarga nginx al renovar.
   reenvía las `X-Forwarded-*` que mande el cliente.
 - Un test genera todos los tipos, con y sin HTTPS, y los valida con un nginx real.
 
-**Plantillas editables.** Están en `/etc/bbel/nginx/templates/<tipo>.conf` y describen el
+**Plantillas editables.** Están en `/etc/blacksmith/nginx/templates/<tipo>.conf` y describen el
 cuerpo del `server` (sus `location`). El envoltorio (puertos, HTTPS, desafío ACME, cabeceras y
-logs en `/var/log/nginx/bbel-<servicio>.*.log`) lo genera el agente, así que editar una
+logs en `/var/log/nginx/blacksmith-<servicio>.*.log`) lo genera el agente, así que editar una
 plantilla no puede romper el TLS. Variables: `{{root}}`, `{{upstream}}`, `{{service}}`,
-`{{server_names}}`, `{{primary}}`. Los snippets comunes están en `/etc/nginx/snippets/bbel/`.
+`{{server_names}}`, `{{primary}}`. Los snippets comunes están en `/etc/nginx/snippets/blacksmith/`.
 Tras editar una plantilla, vuelve a guardar el sitio desde la pestaña Web para regenerarlo.
 
 Instalación (como root, desde la raíz del repositorio; requiere `nginx` y, para HTTPS,
@@ -284,7 +300,7 @@ Solo los builds de desarrollo leen `.env`.
   privilegios, solo red loopback, secretos vía `LoadCredential=`).
 - `deploy/nginx/`: integración con nginx (ver «Sitios web con nginx»); `webhooks.conf` es el
   proxy TLS que solo expone `POST /api/webhooks/github`.
-- `deploy/systemd/bbel@.service` y `bbel-deploy@.service`: plantillas que ejecutan y despliegan
+- `deploy/systemd/blacksmith@.service` y `blacksmith-deploy@.service`: plantillas que ejecutan y despliegan
   los servicios (obligatorio: ver «Servicios: plantillas de systemd»).
 - `deploy/polkit/10-blacksmith.rules` y `verify.sh`: permisos del agente sobre sus servicios
   (obligatorio: ver la sección «Permisos del agente» más arriba).

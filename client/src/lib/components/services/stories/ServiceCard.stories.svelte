@@ -14,7 +14,7 @@
     import ServiceCard from '../ServiceCard.svelte';
 
     const noop = () => {};
-    const base = { name: 'api', displayName: 'API de pagos', unit: 'bbel-api.service', createdAt: 0 };
+    const base = { name: 'api', displayName: 'API de pagos', unit: 'blacksmith-api.service', createdAt: 0 };
 </script>
 
 <Story name="Con descripción" layout="stack">

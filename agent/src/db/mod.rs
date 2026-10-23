@@ -27,7 +27,7 @@ use shared::{
 use crate::services::{Service, ServiceDescription, ServiceId, ServiceName, ServiceSlug};
 
 /// Versión del esquema de `schema.sql`. Se guarda en `PRAGMA user_version`.
-pub const SCHEMA_VERSION: i64 = 9;
+pub const SCHEMA_VERSION: i64 = 10;
 const SCHEMA: &str = include_str!("schema.sql");
 
 /// Caché de páginas pequeña: el agente debe quedarse por debajo de 20 MB en reposo.
@@ -470,7 +470,7 @@ impl Database {
         self.call(move |connection| {
             connection
                 .query_row(
-                    "SELECT template, domains, port, https, email, tls, tls_detail, updated_at \
+                    "SELECT template, domains, port, https, email, tls, tls_detail, updated_at, routes \
                      FROM sites WHERE service_id = ?1",
                     [id.0],
                     |row| {
@@ -480,19 +480,21 @@ impl Database {
                             row.get::<_, bool>(3)?,
                             row.get::<_, Option<String>>(4)?,
                             (row.get::<_, String>(5)?, row.get::<_, Option<String>>(6)?),
-                            row.get::<_, i64>(7)?,
+                            (row.get::<_, i64>(7)?, row.get::<_, String>(8)?),
                         ))
                     },
                 )
                 .optional()?
                 .map(
-                    |((template, domains), port, https, email, (tls, tls_detail), updated_at)| {
+                    |((template, domains), port, https, email, (tls, tls_detail), (updated_at, routes))| {
                         let template = SiteTemplate::ALL
                             .into_iter()
                             .find(|known| known.file_stem() == template)
                             .ok_or_else(|| DbError::Corrupt(format!("plantilla «{template}»")))?;
                         let domains: Vec<String> = serde_json::from_str(&domains)
                             .map_err(|error| DbError::Corrupt(format!("dominios: {error}")))?;
+                        let routes = serde_json::from_str(&routes)
+                            .map_err(|error| DbError::Corrupt(format!("rutas: {error}")))?;
                         Ok(StoredSite {
                             config: SiteConfig {
                                 template,
@@ -500,6 +502,7 @@ impl Database {
                                 port,
                                 https,
                                 email,
+                                routes,
                             },
                             tls: parse_tls(&tls)?,
                             tls_detail,
@@ -543,6 +546,8 @@ impl Database {
             let now = now();
             let domains = serde_json::to_string(&config.domains)
                 .map_err(|error| DbError::Corrupt(format!("dominios: {error}")))?;
+            let routes = serde_json::to_string(&config.routes)
+                .map_err(|error| DbError::Corrupt(format!("rutas: {error}")))?;
             let transaction = connection.transaction()?;
             transaction.execute("DELETE FROM site_domains WHERE service_id = ?1", [id.0])?;
             for domain in &config.domains {
@@ -560,12 +565,12 @@ impl Database {
                 }
             }
             transaction.execute(
-                "INSERT INTO sites (service_id, template, domains, port, https, email, tls, tls_detail, updated_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8) \
+                "INSERT INTO sites (service_id, template, domains, port, https, email, tls, tls_detail, updated_at, routes) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?9) \
                  ON CONFLICT (service_id) DO UPDATE SET template = excluded.template, \
                      domains = excluded.domains, port = excluded.port, https = excluded.https, \
                      email = excluded.email, tls = excluded.tls, tls_detail = NULL, \
-                     updated_at = excluded.updated_at",
+                     updated_at = excluded.updated_at, routes = excluded.routes",
                 params![
                     id.0,
                     config.template.file_stem(),
@@ -574,7 +579,8 @@ impl Database {
                     config.https,
                     config.email,
                     tls_text(tls),
-                    now
+                    now,
+                    routes
                 ],
             )?;
             transaction.commit()?;
@@ -853,6 +859,11 @@ mod tests {
             port: None,
             https: true,
             email: Some("ops@example.com".into()),
+            routes: vec![shared::SiteRoute {
+                path: "/api/".into(),
+                port: 3000,
+                websocket: false,
+            }],
         };
         assert_eq!(db.site(web.id).await.unwrap(), None);
         db.save_site(

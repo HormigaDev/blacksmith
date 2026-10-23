@@ -61,6 +61,12 @@
     const onDeploy = () => {};
 </script>
 
+{#snippet output()}
+    <pre class="output">==&gt; Clonando https://github.com/acme/api.git (main)
+==&gt; [1/2] npm ci
+npm error code ERESOLVE</pre>
+{/snippet}
+
 <Story name="Historial" layout="stack">
     <div class="frame">
         <DeployRuns
@@ -70,13 +76,14 @@
             previousRelease={history[2]?.release}
             {onDeploy}
             onRollback={async () => {}}
+            {output}
             {now}
         />
     </div>
 </Story>
 
 <Story name="En curso" layout="stack">
-    <div class="frame"><DeployRuns runs={[running, ...history]} blocked={null} {onDeploy} {now} /></div>
+    <div class="frame"><DeployRuns runs={[running, ...history]} blocked={null} {onDeploy} {output} {now} /></div>
 </Story>
 
 <Story name="Bloqueado" layout="stack">
@@ -84,6 +91,15 @@
 </Story>
 
 <style>
+    .output {
+        padding: var(--space-3);
+        margin: var(--space-0);
+        font-family: var(--font-mono);
+        font-size: var(--font-size-xs);
+        background-color: var(--color-surface);
+        border-radius: var(--radius-sm);
+    }
+
     .frame {
         width: min(100%, var(--dialog-width-lg));
     }

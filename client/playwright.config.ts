@@ -92,7 +92,8 @@ export default defineConfig({
             use: {
                 ...devices['Desktop Chrome'],
                 baseURL: DEV_URL,
-                viewport: { width: 1280, height: 900 },
+                // Alto de sobra: una historia más alta que la ventana saldría recortada en su captura.
+                viewport: { width: 1280, height: 1600 },
                 deviceScaleFactor: 1,
                 // Rasterizado independiente de la configuración de la máquina (fontconfig, GPU,
                 // perfil de color). Junto con e2e/support/visual.ts hace la captura reproducible.

@@ -243,7 +243,7 @@ pub async fn github_use_default_app(state: State<'_, AppState>) -> CommandResult
 }
 
 /// Registra la llave de despliegue de un servicio en el repositorio (*deploy key* de solo
-/// lectura). Solo funciona con una App propia con *Administration: write*; con la de BBEL (solo
+/// lectura). Solo funciona con una App propia con *Administration: write*; con la de Blacksmith (solo
 /// lectura de contenido) falla con `GITHUB_PERMISSION_MISSING` y la interfaz ofrece hacerlo a mano.
 #[tauri::command]
 pub async fn github_add_deploy_key(

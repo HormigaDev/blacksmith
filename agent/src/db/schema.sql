@@ -9,7 +9,7 @@
 CREATE TABLE services (
     -- AUTOINCREMENT: un id borrado no se reutiliza nunca.
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    -- Define la unidad: bbel-<slug>.service. Misma regla que `ServiceSlug`.
+    -- Define la unidad: blacksmith-<slug>.service. Misma regla que `ServiceSlug`.
     slug       TEXT    NOT NULL UNIQUE CHECK (
                    length(slug) BETWEEN 1 AND 48
                    AND slug NOT GLOB '*[^a-z0-9-]*'
@@ -78,6 +78,8 @@ CREATE TABLE sites (
     port       INTEGER CHECK (port IS NULL OR port BETWEEN 1 AND 65535),
     https      INTEGER NOT NULL CHECK (https IN (0, 1)),
     email      TEXT    CHECK (email IS NULL OR length(email) BETWEEN 3 AND 254),
+    -- Array JSON de rutas hacia otros puertos ({path, port, websocket}), validadas por el agente.
+    routes     TEXT    NOT NULL DEFAULT '[]' CHECK (json_valid(routes) AND json_type(routes) = 'array'),
     tls        TEXT    NOT NULL DEFAULT 'off' CHECK (tls IN ('off', 'issuing', 'active', 'failed')),
     tls_detail TEXT,
     updated_at INTEGER NOT NULL

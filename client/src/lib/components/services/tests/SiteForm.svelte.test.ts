@@ -13,6 +13,7 @@ const SITE: Site = {
     port: 3000,
     https: true,
     email: null,
+    routes: [],
     tls: 'active',
     tlsDetail: null,
     configPath: '/var/lib/blacksmith/nginx/sites/web.conf',
@@ -39,7 +40,58 @@ describe('SiteForm', () => {
             port: 3000,
             https: true,
             email: 'ops@example.com',
+            routes: [],
         });
+    });
+
+    test('rutas hacia otros puertos: se validan como en el agente y se guardan', async () => {
+        const props = handlers();
+        await render(SiteForm, { site: SITE, publishDir: null, ...props });
+        await page.getByRole('button', { name: 'Añadir ruta' }).click();
+        await page.getByRole('textbox', { name: 'Ruta 1' }).fill('/');
+        await page.getByRole('spinbutton', { name: 'Puerto de la ruta 1' }).fill('4040');
+        await page.getByRole('button', { name: 'Añadir ruta' }).click();
+        await page.getByRole('textbox', { name: 'Ruta 2' }).fill('/socket.io/');
+        await page.getByRole('spinbutton', { name: 'Puerto de la ruta 2' }).fill('3001');
+        await page.getByRole('checkbox', { name: 'WebSocket' }).nth(1).click();
+        await page.getByRole('button', { name: 'Guardar y aplicar' }).click();
+        await expect
+            .element(page.getByRole('textbox', { name: 'Ruta 1' }))
+            .toHaveAccessibleDescription(/Un prefijo como \/api\//);
+        await expect
+            .element(page.getByRole('spinbutton', { name: 'Puerto de la ruta 1' }))
+            .toHaveAccessibleDescription(/puerto es el del agente/);
+        expect(props.onSave).not.toHaveBeenCalled();
+
+        await page.getByRole('textbox', { name: 'Ruta 1' }).fill(' /api/ ');
+        await page.getByRole('spinbutton', { name: 'Puerto de la ruta 1' }).fill('3002');
+        await page.getByRole('button', { name: 'Guardar y aplicar' }).click();
+        expect(props.onSave).toHaveBeenCalledWith(
+            expect.objectContaining({
+                routes: [
+                    { path: '/api/', port: 3002, websocket: false },
+                    { path: '/socket.io/', port: 3001, websocket: true },
+                ],
+            }),
+        );
+
+        // Quitar una ruta deja la otra.
+        await page.getByRole('button', { name: 'Quitar la ruta 1' }).click();
+        await expect.element(page.getByRole('textbox', { name: 'Ruta 1' })).toHaveValue('/socket.io/');
+        await expect.element(page.getByRole('textbox', { name: 'Ruta 2' })).not.toBeInTheDocument();
+    });
+
+    test('una ruta que ya usa la plantilla se rechaza antes de enviarla', async () => {
+        const props = handlers();
+        await render(SiteForm, { site: { ...SITE, template: 'fullstack' }, publishDir: 'dist', ...props });
+        await page.getByRole('button', { name: 'Añadir ruta' }).click();
+        await page.getByRole('textbox', { name: 'Ruta 1' }).fill('/api/');
+        await page.getByRole('spinbutton', { name: 'Puerto de la ruta 1' }).fill('3002');
+        await page.getByRole('button', { name: 'Guardar y aplicar' }).click();
+        await expect
+            .element(page.getByRole('textbox', { name: 'Ruta 1' }))
+            .toHaveAccessibleDescription('Esta plantilla ya usa esa ruta.');
+        expect(props.onSave).not.toHaveBeenCalled();
     });
 
     test('valida como el agente: dominio, puerto y HTTPS en dominios locales', async () => {

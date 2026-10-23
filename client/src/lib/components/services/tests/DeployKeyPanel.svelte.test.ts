@@ -6,7 +6,7 @@ import { TunnelError } from '$lib/ssh';
 
 import DeployKeyPanel from '../DeployKeyPanel.svelte';
 
-const KEY = { publicKey: 'ssh-ed25519 AAAAC3Nza bbel-api@vps', fingerprint: 'SHA256:abc123' };
+const KEY = { publicKey: 'ssh-ed25519 AAAAC3Nza blacksmith-api@vps', fingerprint: 'SHA256:abc123' };
 const REPO = { owner: 'acme', name: 'api', branch: 'main' };
 const handlers = () => ({
     onCreate: vi.fn(async () => {}),
@@ -22,7 +22,7 @@ describe('DeployKeyPanel', () => {
         expect(props.onCreate).toHaveBeenCalledOnce();
     });
 
-    test('con la App de BBEL: muestra la llave y el registro manual, sin pedir Administration', async () => {
+    test('con la App de Blacksmith: muestra la llave y el registro manual, sin pedir Administration', async () => {
         const props = handlers();
         await render(DeployKeyPanel, { key: KEY, repository: REPO, canRegister: false, ...props });
         await expect.element(page.getByText(KEY.publicKey)).toBeVisible();

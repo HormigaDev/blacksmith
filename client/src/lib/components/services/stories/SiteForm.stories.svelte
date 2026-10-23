@@ -4,7 +4,7 @@
     export const meta: StoryMeta = {
         title: 'SiteForm',
         group: 'Servicios',
-        description: 'Sitio web del servicio en nginx: plantilla, dominios, puerto y HTTPS.',
+        description: 'Sitio web del servicio en nginx: plantilla, dominios, puerto, rutas hacia otros puertos y HTTPS.',
     };
 </script>
 
@@ -21,6 +21,7 @@
         port: 3000,
         https: true,
         email: 'ops@example.com',
+        routes: [],
         tls: 'active',
         tlsDetail: null,
         configPath: '/var/lib/blacksmith/nginx/sites/web.conf',
@@ -40,6 +41,23 @@
 
 <Story name="HTTPS activo" layout="stack">
     <div class="frame"><SiteForm {site} publishDir="dist" {...handlers} /></div>
+</Story>
+
+<Story name="Con rutas" layout="stack">
+    <div class="frame">
+        <SiteForm
+            site={{
+                ...site,
+                template: 'spa',
+                routes: [
+                    { path: '/api/', port: 3000, websocket: false },
+                    { path: '/socket.io/', port: 3001, websocket: true },
+                ],
+            }}
+            publishDir="dist"
+            {...handlers}
+        />
+    </div>
 </Story>
 
 <Story name="Pidiendo certificado" layout="stack">

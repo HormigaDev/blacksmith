@@ -2,10 +2,10 @@
 //! pide su certificado de Let's Encrypt.
 //!
 //! - **Aplicar**: el agente escribe `<sitios>/<servicio>.conf` (su directorio; nginx lo incluye
-//!   desde `conf.d/bbel.conf`) y arranca `bbel-nginx.service`, que corre `nginx -t` y recarga. Si
+//!   desde `conf.d/blacksmith.conf`) y arranca `blacksmith-nginx.service`, que corre `nginx -t` y recarga. Si
 //!   nginx lo rechaza, se restaura el archivo anterior y nginx sigue como estaba.
 //! - **HTTPS**: el sitio se publica primero por HTTP (con el desafío ACME) y se pide el
-//!   certificado en segundo plano con `bbel-certbot@<dominio>.service`; con el certificado, se
+//!   certificado en segundo plano con `blacksmith-certbot@<dominio>.service`; con el certificado, se
 //!   vuelve a generar con HTTPS, redirección y HSTS. Si falla, el sitio sigue por HTTP y el motivo
 //!   queda en `tls_detail`.
 //! - Las dos unidades son del systemd del sistema (también en modo local) y polkit solo deja
@@ -18,7 +18,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use shared::{Site, SiteConfig, TlsStatus};
+use shared::{Site, SiteConfig, SiteRoute, TlsStatus};
 use tokio::sync::Mutex;
 
 use super::template::{self, SiteVars, TemplateError};
@@ -33,8 +33,8 @@ use crate::{
     systemd::{Action, Systemctl, SystemctlError, UnitName},
 };
 
-/// Unidad que valida (`nginx -t`) y recarga nginx (deploy/nginx/systemd/bbel-nginx.service).
-const APPLY_UNIT: &str = "bbel-nginx.service";
+/// Unidad que valida (`nginx -t`) y recarga nginx (deploy/nginx/systemd/blacksmith-nginx.service).
+const APPLY_UNIT: &str = "blacksmith-nginx.service";
 /// Algo más que su `TimeoutStartSec=` (60 s / 5 min): quien corta es systemd.
 const APPLY_TIMEOUT: Duration = Duration::from_secs(70);
 const CERTBOT_TIMEOUT: Duration = Duration::from_secs(6 * 60);
@@ -249,13 +249,29 @@ impl SiteManager {
                     .to_string()
             }),
             tls,
+            routes: config.routes.clone(),
         };
         let templates_dir = self.paths.nginx_templates_dir.clone();
         let template = config.template;
         let text = tokio::task::spawn_blocking(move || template::load(&templates_dir, template))
             .await
             .map_err(DbError::from)??;
-        let site = template::render_site(&template::render_body(&text, &vars)?, &vars);
+        let body = template::render_body(&text, &vars)?;
+        // Una ruta con el mismo prefijo que un `location` de la plantilla (la del administrador,
+        // que puede haberla editado) sería un duplicado: nginx -t lo rechazaría sin más detalle.
+        let taken = template::template_locations(&body);
+        if let Some(route) = config
+            .routes
+            .iter()
+            .find(|route| taken.contains(&route.path))
+        {
+            return Err(SiteError::Invalid(format!(
+                "la plantilla «{}» ya define la ruta {}: quítala de las rutas",
+                config.template.file_stem(),
+                route.path
+            )));
+        }
+        let site = template::render_site(&body, &vars);
 
         let path = self.site_file(&service.slug);
         let undo = Undo {
@@ -335,14 +351,14 @@ impl SiteManager {
             None => "--register-unsafely-without-email".to_owned(),
         });
         // Valores ya validados: solo dominios y un correo, sin espacios ni comillas.
-        let env = format!("BBEL_CERTBOT_ARGS={}\n", args.join(" "));
+        let env = format!("BLACKSMITH_CERTBOT_ARGS={}\n", args.join(" "));
         write(
             &self.paths.nginx_certs_dir.join(format!("{primary}.env")),
             env.into_bytes(),
         )
         .await
         .map_err(|error| DisplayChain(&error).to_string())?;
-        let unit_name = format!("bbel-certbot@{primary}.service");
+        let unit_name = format!("blacksmith-certbot@{primary}.service");
         let unit = UnitName::new(&unit_name).map_err(|error| error.to_string())?;
         let since = now();
         match self
@@ -509,13 +525,61 @@ pub fn validate(
         Some(email) if valid_email(email) => Some(email.to_owned()),
         Some(_) => return Err(invalid("correo electrónico inválido")),
     };
+    let routes = validate_routes(config.routes, agent_port)?;
     Ok(SiteConfig {
         template: config.template,
         domains,
         port,
         https: config.https,
         email,
+        routes,
     })
+}
+
+const MAX_ROUTES: usize = 20;
+const MAX_ROUTE_LEN: usize = 100;
+
+/// Rutas hacia otros puertos: prefijos que acaban en la configuración de nginx, así que solo con
+/// caracteres de ruta seguros, sin `..` ni `//`, y nunca `/` (la raíz es de la plantilla) ni
+/// `/.well-known` (es del desafío de Let's Encrypt).
+fn validate_routes(routes: Vec<SiteRoute>, agent_port: u16) -> Result<Vec<SiteRoute>, SiteError> {
+    if routes.len() > MAX_ROUTES {
+        return Err(SiteError::Invalid(format!("como mucho {MAX_ROUTES} rutas")));
+    }
+    let mut seen: Vec<String> = Vec::with_capacity(routes.len());
+    let mut valid = Vec::with_capacity(routes.len());
+    for route in routes {
+        let path = route.path.trim().to_owned();
+        let well_formed = path.len() > 1
+            && path.len() <= MAX_ROUTE_LEN
+            && path.starts_with('/')
+            && path.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'_' | b'-' | b'~')
+            })
+            && !path.contains("//")
+            && !path.split('/').any(|part| part == ".." || part == ".")
+            && !path.starts_with("/.well-known");
+        if !well_formed {
+            return Err(SiteError::Invalid(format!(
+                "ruta inválida «{path}»: un prefijo como /api/ o /socket.io/ (letras, dígitos, . _ - ~)"
+            )));
+        }
+        if seen.contains(&path) {
+            return Err(SiteError::Invalid(format!("la ruta {path} está repetida")));
+        }
+        if route.port < 1024 || route.port == agent_port {
+            return Err(SiteError::Invalid(format!(
+                "puerto inválido para {path}: 1024 o mayor, y distinto del del agente"
+            )));
+        }
+        seen.push(path.clone());
+        valid.push(SiteRoute {
+            path,
+            port: route.port,
+            websocket: route.websocket,
+        });
+    }
+    Ok(valid)
 }
 
 /// Nombre de host: etiquetas de `a-z0-9-` (1-63, sin guion en los extremos), al menos dos, o
@@ -585,6 +649,49 @@ mod tests {
             port,
             https,
             email: None,
+            routes: Vec::new(),
+        }
+    }
+
+    fn route(path: &str, port: u16) -> SiteRoute {
+        SiteRoute {
+            path: path.into(),
+            port,
+            websocket: false,
+        }
+    }
+
+    #[test]
+    fn rutas_hacia_otros_puertos() {
+        let with = |routes: Vec<SiteRoute>| {
+            validate(
+                SiteConfig {
+                    routes,
+                    ..config(SiteTemplate::Spa, &["example.com"], None, false)
+                },
+                true,
+                4040,
+            )
+        };
+        let ok = with(vec![route(" /api/ ", 3000), route("/socket.io/", 3001)]).unwrap();
+        assert_eq!(ok.routes[0].path, "/api/");
+        for bad in [
+            vec![route("/", 3000)],
+            vec![route("api/", 3000)],
+            vec![route("/a b", 3000)],
+            vec![route("/../etc", 3000)],
+            vec![route("/a//b", 3000)],
+            vec![route("/api;", 3000)],
+            vec![route("/api/ { return 200; }", 3000)],
+            vec![route("/.well-known/x", 3000)],
+            vec![route("/api/", 80)],
+            vec![route("/api/", 4040)],
+            vec![route("/api/", 3000), route("/api/", 3001)],
+        ] {
+            assert!(
+                matches!(with(bad.clone()), Err(SiteError::Invalid(_))),
+                "{bad:?}"
+            );
         }
     }
 
@@ -592,7 +699,7 @@ mod tests {
     fn normaliza_y_acepta() {
         let normalized = validate(
             SiteConfig {
-                email: Some(" ops+bbel@Example.com ".into()),
+                email: Some(" ops+blacksmith@Example.com ".into()),
                 ..config(
                     SiteTemplate::App,
                     &[" Example.COM. ", "www.example.com"],
@@ -606,7 +713,10 @@ mod tests {
         .unwrap();
         assert_eq!(normalized.domains, ["example.com", "www.example.com"]);
         assert_eq!(normalized.port, Some(3000));
-        assert_eq!(normalized.email.as_deref(), Some("ops+bbel@Example.com"));
+        assert_eq!(
+            normalized.email.as_deref(),
+            Some("ops+blacksmith@Example.com")
+        );
         // Sin proxy, el puerto no se guarda.
         let spa = validate(
             config(SiteTemplate::Spa, &["app.localhost"], Some(3000), false),

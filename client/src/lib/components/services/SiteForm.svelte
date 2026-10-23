@@ -3,12 +3,20 @@
     servicio y HTTPS con Let's Encrypt. Valida como el agente antes de guardar; el agente genera la
     configuración, la prueba con `nginx -t` y, si nginx la rechaza, mantiene la anterior.
 
+    Rutas adicionales: prefijos que nginx reenvía a otros puertos del servidor antes que la
+    plantilla (p. ej. /api/ → 3000 y /socket.io/ → 3001 con WebSocket), para proyectos con varios
+    procesos. El agente rechaza las que choquen con la plantilla.
+
     Estado del certificado: se pide en segundo plano tras guardar (el sitio ya responde por HTTP);
     si falla, se muestra el motivo y se puede reintentar.
 -->
 <script lang="ts">
+    import ArrowRightIcon from '@lucide/svelte/icons/arrow-right';
     import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
+    import PlusIcon from '@lucide/svelte/icons/plus';
+    import RouteIcon from '@lucide/svelte/icons/route';
     import Trash2Icon from '@lucide/svelte/icons/trash-2';
+    import XIcon from '@lucide/svelte/icons/x';
     import { untrack } from 'svelte';
 
     import { proxies, servesFiles, type Site, type SiteConfig, SITE_TEMPLATES, type SiteTemplate } from '$lib/agent';
@@ -17,6 +25,7 @@
 
     import Badge from '../ui/Badge.svelte';
     import Button from '../ui/Button.svelte';
+    import Checkbox from '../ui/Checkbox.svelte';
     import ConfirmDialog from '../ui/ConfirmDialog.svelte';
     import Input from '../ui/Input.svelte';
     import Select from '../ui/Select.svelte';
@@ -38,6 +47,7 @@
 
     let { site, publishDir, agentPort = 4040, onSave, onRemove, onRetryCertificate, onOpenSite }: Props = $props();
 
+    const uid = $props.id();
     const siteUrl = $derived(site ? `${site.tls === 'active' ? 'https' : 'http'}://${site.domains[0]}` : '');
 
     const initial = untrack(() => site);
@@ -49,6 +59,14 @@
     const portText = $derived(String(port).trim());
     let https = $state(initial?.https ?? true);
     let email = $state(initial?.email ?? '');
+    interface RouteRow {
+        key: number;
+        path: string;
+        port: number | string;
+        websocket: boolean;
+    }
+    let nextKey = 0;
+    let routes = $state<RouteRow[]>((initial?.routes ?? []).map((route) => ({ key: nextKey++, ...route })));
     let submitted = $state(false);
     let busy = $state(false);
     let retrying = $state(false);
@@ -86,6 +104,50 @@
         }
         return value === agentPort ? t('services.site.portAgent') : undefined;
     });
+    /** Mismas reglas que el agente (nginx::sites::validate_routes). */
+    const MAX_ROUTES = 20;
+    const ROUTE = /^\/[A-Za-z0-9/._~-]{1,99}$/;
+    /** Prefijos que ya usan las plantillas por defecto (el agente comprueba la plantilla real). */
+    const TEMPLATE_LOCATIONS: Partial<Record<SiteTemplate, string[]>> = {
+        spa: ['/index.html'],
+        fullstack: ['/api/', '/ws', '/index.html'],
+    };
+    const routePath = (route: RouteRow) => route.path.trim();
+    const routePort = (route: RouteRow) => String(route.port).trim();
+    const pathError = (route: RouteRow, index: number) => {
+        const path = routePath(route);
+        if (
+            !ROUTE.test(path) ||
+            path.includes('//') ||
+            path.split('/').some((part) => part === '.' || part === '..') ||
+            path.startsWith('/.well-known')
+        ) {
+            return t('services.site.routes.pathInvalid');
+        }
+        if (routes.slice(0, index).some((other) => routePath(other) === path)) {
+            return t('services.site.routes.pathRepeated');
+        }
+        if (TEMPLATE_LOCATIONS[template]?.includes(path)) return t('services.site.routes.pathTemplate');
+        return undefined;
+    };
+    const routePortError = (route: RouteRow) => {
+        const text = routePort(route);
+        const value = Number(text);
+        if (!text || !Number.isInteger(value) || value < 1024 || value > 65535) return t('services.site.portInvalid');
+        return value === agentPort ? t('services.site.portAgent') : undefined;
+    };
+    const routesInvalid = $derived(
+        routes.some((route, index) => pathError(route, index) !== undefined || routePortError(route) !== undefined),
+    );
+
+    function addRoute(): void {
+        routes.push({ key: nextKey++, path: '', port: '', websocket: false });
+    }
+
+    function removeRoute(key: number): void {
+        routes = routes.filter((route) => route.key !== key);
+    }
+
     const httpsError = $derived(
         https && domains.some((domain) => domain === 'localhost' || LOCAL.some((suffix) => domain.endsWith(suffix)))
             ? t('services.site.httpsLocal')
@@ -114,7 +176,7 @@
         event.preventDefault();
         submitted = true;
         formError = undefined;
-        if (primaryError || aliasesError || portError || httpsError || emailError) return;
+        if (primaryError || aliasesError || portError || routesInvalid || httpsError || emailError) return;
         if (needsFiles && !publishDir) return;
         busy = true;
         try {
@@ -124,6 +186,11 @@
                 port: needsPort ? Number(portText) : null,
                 https,
                 email: https && email.trim() ? email.trim() : null,
+                routes: routes.map((route) => ({
+                    path: routePath(route),
+                    port: Number(routePort(route)),
+                    websocket: route.websocket,
+                })),
             });
             submitted = false;
         } catch (error) {
@@ -224,6 +291,73 @@
         />
     {/if}
 
+    <section class="routes" aria-labelledby="{uid}-routes">
+        <div class="routes-head">
+            <RouteIcon />
+            <div>
+                <h4 id="{uid}-routes" class="routes-title">{t('services.site.routes.title')}</h4>
+                <p class="note">{t('services.site.routes.hint')}</p>
+            </div>
+        </div>
+        {#if routes.length > 0}
+            <ul class="route-list">
+                {#each routes as route, index (route.key)}
+                    {@const number = index + 1}
+                    <li class="route">
+                        <div class="route-path">
+                            <Input
+                                label={t('services.site.routes.path', { number })}
+                                hideLabel
+                                placeholder={t('services.site.routes.pathPlaceholder')}
+                                autocomplete="off"
+                                spellcheck="false"
+                                error={submitted ? pathError(route, index) : undefined}
+                                bind:value={route.path}
+                            >
+                                {#snippet leading()}<RouteIcon />{/snippet}
+                            </Input>
+                        </div>
+                        <span class="arrow" aria-hidden="true"><ArrowRightIcon /></span>
+                        <div class="route-port">
+                            <Input
+                                label={t('services.site.routes.port', { number })}
+                                hideLabel
+                                type="number"
+                                min={1024}
+                                max={65535}
+                                placeholder="3001"
+                                error={submitted ? routePortError(route) : undefined}
+                                bind:value={route.port}
+                            />
+                        </div>
+                        <div class="centered">
+                            <Checkbox label={t('services.site.routes.websocket')} bind:checked={route.websocket} />
+                        </div>
+                        <div class="centered">
+                            <Button
+                                size="sm"
+                                variant="ghost"
+                                iconOnly
+                                aria-label={t('services.site.routes.remove', { number })}
+                                onclick={() => removeRoute(route.key)}
+                            >
+                                <XIcon />
+                            </Button>
+                        </div>
+                    </li>
+                {/each}
+            </ul>
+        {/if}
+        {#if routes.length < MAX_ROUTES}
+            <div>
+                <Button size="sm" onclick={addRoute}>
+                    <PlusIcon />
+                    {t('services.site.routes.add')}
+                </Button>
+            </div>
+        {/if}
+    </section>
+
     <Switch label={t('services.site.https')} description={t('services.site.httpsHint')} bind:checked={https} />
     {#if submitted && httpsError}<p class="alert" role="alert">{httpsError}</p>{/if}
     {#if https}
@@ -309,6 +443,76 @@
     .grow {
         flex: 1 1 min(100%, var(--layout-card-min-width));
         min-width: 0;
+    }
+
+    .routes {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-3);
+        padding: var(--space-3) var(--space-4);
+        border: var(--border-width) solid var(--color-border);
+        border-radius: var(--radius-md);
+    }
+
+    .routes-head {
+        display: flex;
+        gap: var(--space-3);
+        align-items: flex-start;
+    }
+
+    .routes-head > :global(svg) {
+        flex-shrink: 0;
+        width: var(--icon-size-md);
+        height: var(--icon-size-md);
+        margin-top: var(--space-px);
+        color: var(--color-accent);
+    }
+
+    .routes-title {
+        font-size: var(--font-size-sm);
+        font-weight: var(--font-weight-semibold);
+    }
+
+    .route-list {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+        padding: var(--space-0);
+        margin: var(--space-0);
+        list-style: none;
+    }
+
+    .route {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: var(--space-2) var(--space-3);
+    }
+
+    .route-path {
+        flex: 1 1 min(100%, var(--layout-tile-min-width));
+        min-width: 0;
+    }
+
+    .route-port {
+        flex: 0 1 var(--layout-tile-min-width);
+        min-width: 0;
+    }
+
+    .arrow,
+    .centered {
+        display: flex;
+        align-items: center;
+        min-height: var(--control-height-md);
+    }
+
+    .arrow {
+        color: var(--color-text-subtle);
+    }
+
+    .arrow :global(svg) {
+        width: var(--icon-size-sm);
+        height: var(--icon-size-sm);
     }
 
     .note {

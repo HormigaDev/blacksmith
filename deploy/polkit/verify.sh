@@ -14,9 +14,9 @@ set -eu
 }
 
 UNITS=/run/systemd/system
-MANAGED=bbel@verificacion.service
-DEPLOY=bbel-deploy@verificacion.service
-CERT=bbel-certbot@verificacion.example.service
+MANAGED=blacksmith@verificacion.service
+DEPLOY=blacksmith-deploy@verificacion.service
+CERT=blacksmith-certbot@verificacion.example.service
 FOREIGN=blacksmith-verificacion-ajena.service
 created_user=no
 
@@ -75,12 +75,12 @@ expect denegado stop nginx.service
 # Una unidad transitoria con el prefijo permitido llevaría cualquier comando y se ejecutaría
 # como root: crearla debe estar denegado aunque el nombre encaje con la regla.
 if runuser -u blacksmith -- env LC_ALL=C systemd-run --no-ask-password --quiet \
-    --unit=bbel@verificacion-transitoria -- /bin/true >/dev/null 2>&1; then
-    printf 'FALLA  denegado  %-8s %s\n' "run" "bbel@verificacion-transitoria (systemd-run)"
-    systemctl stop bbel@verificacion-transitoria.service 2>/dev/null || true
+    --unit=blacksmith@verificacion-transitoria -- /bin/true >/dev/null 2>&1; then
+    printf 'FALLA  denegado  %-8s %s\n' "run" "blacksmith@verificacion-transitoria (systemd-run)"
+    systemctl stop blacksmith@verificacion-transitoria.service 2>/dev/null || true
     failures=$((failures + 1))
 else
-    printf 'ok     %-9s %-8s %s\n' "denegado" "run" "bbel@verificacion-transitoria (systemd-run)"
+    printf 'ok     %-9s %-8s %s\n' "denegado" "run" "blacksmith@verificacion-transitoria (systemd-run)"
 fi
 
 # Mensaje exacto de una denegación (el agente lo clasifica como PermissionDenied).

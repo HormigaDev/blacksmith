@@ -1,7 +1,7 @@
 //! Lo que ejecutan las plantillas de systemd: `blacksmith-agent run-deploy` y `run-service`. Corre
 //! como el usuario de los servicios, nunca como el agente, y sin su configuración.
 //!
-//! Estructura del directorio de estado (`$STATE_DIRECTORY`, `%S/bbel/<nombre>`):
+//! Estructura del directorio de estado (`$STATE_DIRECTORY`, `%S/blacksmith/<nombre>`):
 //!
 //! ```text
 //! releases/<id>/        una versión: clon de la rama + resultado de la preparación
@@ -243,11 +243,11 @@ impl Git {
         }
         if let Some(file) = &self.token_file {
             // La ruta va en el entorno del helper, no en el script: así no hay que escaparla.
-            command.env("BBEL_GITHUB_TOKEN_FILE", file).args([
+            command.env("BLACKSMITH_GITHUB_TOKEN_FILE", file).args([
                 "-c",
                 "credential.helper=!f() { test \"$1\" = get || exit 0; \
                  echo username=x-access-token; \
-                 printf 'password=%s\\n' \"$(cat \"$BBEL_GITHUB_TOKEN_FILE\")\"; }; f",
+                 printf 'password=%s\\n' \"$(cat \"$BLACKSMITH_GITHUB_TOKEN_FILE\")\"; }; f",
             ]);
         }
         command

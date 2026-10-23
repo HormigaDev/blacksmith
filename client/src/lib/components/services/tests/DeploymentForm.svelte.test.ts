@@ -11,7 +11,7 @@ const EMPTY: ServiceDeployment = {
     name: 'api',
     repository: null,
     access: 'account',
-    workingDirectory: '/srv/bbel/api',
+    workingDirectory: '/srv/blacksmith/api',
     setupCommands: [],
     startCommand: '',
     publishDir: null,
@@ -38,7 +38,7 @@ describe('DeploymentForm', () => {
             onConnectGitHub,
             onSave: vi.fn(),
         });
-        await expect.element(page.getByText('/srv/bbel/api')).toBeVisible();
+        await expect.element(page.getByText('/srv/blacksmith/api')).toBeVisible();
         await page.getByRole('button', { name: 'Conectar con GitHub' }).click();
         expect(onConnectGitHub).toHaveBeenCalledOnce();
     });

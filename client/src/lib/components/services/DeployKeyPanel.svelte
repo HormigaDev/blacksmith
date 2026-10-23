@@ -3,7 +3,7 @@
     privada nunca sale de allí) y se añade al repositorio como *deploy key* de solo lectura.
 
     Registrarla con un clic exige el permiso *Administration* de GitHub, que también permite
-    borrar repositorios: la App de BBEL no lo pide. Solo se ofrece con una App propia
+    borrar repositorios: la App de Blacksmith no lo pide. Solo se ofrece con una App propia
     (`canRegister`); si aun así GitHub lo rechaza, se pasa al registro manual.
 -->
 <script lang="ts">

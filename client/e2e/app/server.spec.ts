@@ -7,7 +7,7 @@ test.describe('Página del servidor', () => {
         await page.goto('/servers/deploy%40vps.example.com%3A22');
         await waitForApp(page);
         await expect(page.getByRole('heading', { level: 1 })).toHaveText('Servidor no encontrado');
-        await expect(page).toHaveTitle('Servidor no encontrado · BBEL Blacksmith');
+        await expect(page).toHaveTitle('Servidor no encontrado · Blacksmith');
 
         await page.getByRole('link', { name: 'Servidores' }).click();
         await expect(page).toHaveURL(/\/$/);
@@ -42,11 +42,17 @@ test.describe('Página del servidor', () => {
 test.describe('Servicios del servidor', () => {
     const LOCAL = { id: 'local:4040', kind: 'local', host: 'localhost', port: 4040, username: '' };
     const SERVICES = [
-        { name: 'api', displayName: 'API de pagos', description: 'Cobros.', unit: 'bbel-api.service', createdAt: 0 },
+        {
+            name: 'api',
+            displayName: 'API de pagos',
+            description: 'Cobros.',
+            unit: 'blacksmith-api.service',
+            createdAt: 0,
+        },
     ];
     const NOT_DEPLOYED = {
         name: 'api',
-        unit: 'bbel-api.service',
+        unit: 'blacksmith-api.service',
         loadState: 'loaded',
         activeState: 'inactive',
         subState: 'dead',
@@ -55,11 +61,22 @@ test.describe('Servicios del servidor', () => {
         deployed: false,
         release: null,
         previousRelease: null,
+        resources: {
+            memoryBytes: null,
+            memoryPeakBytes: null,
+            memoryLimitBytes: null,
+            swapBytes: null,
+            cpuPercent: null,
+            tasks: null,
+            restarts: null,
+            uptimeSecs: null,
+        },
+        host: { cpuCores: 4, memoryBytes: 8589934592, swapBytes: 0 },
     };
     const DEPLOYMENT = {
         name: 'api',
         repository: null,
-        workingDirectory: '/srv/bbel/api',
+        workingDirectory: '/srv/blacksmith/api',
         access: 'account',
         setupCommands: ['npm ci'],
         startCommand: 'npm start',
@@ -68,13 +85,13 @@ test.describe('Servicios del servidor', () => {
     };
     const ENV = {
         name: 'api',
-        unit: 'bbel-api.service',
-        file: '/etc/bbel/env/bbel-api.env',
+        unit: 'blacksmith-api.service',
+        file: '/etc/blacksmith/env/blacksmith-api.env',
         loadedByUnit: true,
         globalLoadedByUnit: true,
         variables: [{ key: 'PORT', value: '8080' }],
     };
-    const GLOBAL = { file: '/etc/bbel/env/global.env', variables: [{ key: 'PORT', value: '80' }] };
+    const GLOBAL = { file: '/etc/blacksmith/env/global.env', variables: [{ key: 'PORT', value: '80' }] };
 
     test('servicio: controles, pestañas de logs, despliegue y variables', async ({ page }) => {
         await mockTauri(page, {
@@ -112,18 +129,23 @@ test.describe('Servicios del servidor', () => {
         await page.getByRole('link', { name: 'API de pagos' }).click();
         await expect(page.getByRole('heading', { level: 1 })).toHaveText('API de pagos');
         // Sin desplegar: controles deshabilitados.
-        await expect(page.getByText('Sin desplegar')).toBeVisible();
         const controls = page.getByRole('region', { name: 'Control del servicio' });
+        await expect(controls.getByText('Sin desplegar')).toBeVisible();
         await expect(controls.getByRole('button', { name: 'Iniciar', exact: true })).toBeDisabled();
         await expect(controls.getByRole('button', { name: 'Reiniciar', exact: true })).toBeDisabled();
-        // Logs (pestaña por defecto).
+        // Resumen (pestaña por defecto): sin desplegar, no hay consumo que mostrar.
         const tabs = page.getByRole('navigation', { name: 'Secciones del servicio' });
+        await expect(tabs.getByRole('link', { name: 'Resumen' })).toHaveAttribute('aria-current', 'page');
+        await expect(page.getByRole('region', { name: 'CPU' })).toBeVisible();
+        await expect(page.getByText('El servicio no está en marcha: no consume recursos.')).toBeVisible();
+        // Logs.
+        await tabs.getByRole('link', { name: 'Logs' }).click();
         await expect(tabs.getByRole('link', { name: 'Logs' })).toHaveAttribute('aria-current', 'page');
         await expect(page.getByText('Aún no hay entradas.')).toBeVisible();
 
         await tabs.getByRole('link', { name: 'Despliegue' }).click();
         await expect(page).toHaveURL(/\/services\/api\/deployment$/);
-        await expect(page.getByText('/srv/bbel/api')).toBeVisible();
+        await expect(page.getByText('/srv/blacksmith/api')).toBeVisible();
         await expect(page.getByRole('textbox', { name: 'Comando 1' })).toHaveValue('npm ci');
         await expect(page.getByRole('textbox', { name: /Comando de arranque/ })).toHaveValue('npm start');
         // Sin repositorio no se puede desplegar todavía.

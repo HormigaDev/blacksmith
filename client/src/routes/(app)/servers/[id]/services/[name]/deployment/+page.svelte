@@ -41,14 +41,17 @@
         return null;
     });
 
-    // Salida del despliegue: se sigue mientras hay uno en curso o tras haber lanzado uno.
+    // Salida del último despliegue (solo la suya, no la de los anteriores): en vivo mientras dura.
     let logs = $state<LogSession>();
     const lastRunId = $derived(service?.runs?.[0]?.id);
+    const lastRunStart = $derived(service?.runs?.[0]?.startedAt);
     $effect(() => {
         const id = serverId;
         const current = name;
-        if (!id || lastRunId === undefined) return;
-        const session = new LogSession((onEvent) => followLogs(id, current, onEvent, { deploy: true }));
+        if (!id || lastRunId === undefined || lastRunStart === undefined) return;
+        // Un segundo de margen: el registro y el arranque de la unidad no son el mismo instante.
+        const since = Math.max(0, lastRunStart - 1);
+        const session = new LogSession((onEvent) => followLogs(id, current, onEvent, { deploy: true, since }));
         logs = session;
         void session.start();
         return () => void session.stop();
@@ -63,7 +66,7 @@
 
     async function registerKey(): Promise<void> {
         if (!repository || !service?.key) return;
-        await addDeployKey(repository.owner, repository.name, `bbel-${name}`, service.key.publicKey);
+        await addDeployKey(repository.owner, repository.name, `blacksmith-${name}`, service.key.publicKey);
     }
 
     function openDeployKeys(): void {
@@ -133,23 +136,29 @@
                     previousRelease={service.status?.previousRelease}
                     onDeploy={deploy}
                     onRollback={rollback}
-                />
+                    serviceRunning={service.status
+                        ? ['active', 'reloading', 'activating'].includes(service.status.activeState)
+                        : null}
+                >
+                    {#snippet output()}
+                        {#if logs}
+                            <LogViewer
+                                name={`${name} (${t('services.deploys.logs')})`}
+                                lines={logs.lines}
+                                status={logs.status}
+                                endReason={logs.endReason}
+                                error={logs.error}
+                                onReconnect={() => logs?.start()}
+                            />
+                        {/if}
+                    {/snippet}
+                </DeployRuns>
                 {#if server && server.github !== undefined && !usesKey}
                     <p class="note">
                         {server.github
                             ? t('services.deploys.githubAccess', { login: server.github.login })
                             : t('services.deploys.publicOnly')}
                     </p>
-                {/if}
-                {#if logs && lastRunId !== undefined}
-                    <LogViewer
-                        name={`${name} (${t('services.deploys.logs')})`}
-                        lines={logs.lines}
-                        status={logs.status}
-                        endReason={logs.endReason}
-                        error={logs.error}
-                        onReconnect={() => logs?.start()}
-                    />
                 {/if}
             </Panel>
         </div>
