@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
-use crate::{error::CommandError, ssh::host_keys::write_private_file};
+use crate::{error::CommandError, files::write_private_file};
 
 const MAGIC: &[u8; 4] = b"BSV1";
 const NONCE_LEN: usize = 12;
@@ -83,10 +83,11 @@ impl Vault {
     /// El `id` no debe coincidir con el de un servidor: va como dato autenticado, así que un
     /// archivo no descifra con otro id.
     pub fn put_value<T: Serialize>(&self, id: &str, value: &T) -> Result<(), CommandError> {
-        let plaintext = Zeroizing::new(
-            serde_json::to_vec(value)
-                .map_err(|error| CommandError::internal("serializando la credencial", error))?,
-        );
+        // Con capacidad de sobra (una llave ocupa hasta 64 KiB): si el vector creciera, la copia
+        // anterior quedaría sin borrar.
+        let mut plaintext = Zeroizing::new(Vec::with_capacity(96 * 1024));
+        serde_json::to_writer(&mut *plaintext, value)
+            .map_err(|error| CommandError::internal("serializando la credencial", error))?;
         let mut nonce = [0u8; NONCE_LEN];
         getrandom::fill(&mut nonce)
             .map_err(|error| CommandError::internal("generando el nonce", error))?;

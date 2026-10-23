@@ -67,7 +67,6 @@ describe('parseServiceStatus', () => {
         activeState: 'active',
         subState: 'running',
         pid: 42,
-        metrics: { rssBytes: 1024, rssMb: 0, cpuPercent: 1.5 },
         deployed: true,
         release: 'r1800000000-000000000',
         previousRelease: null,
@@ -88,7 +87,7 @@ describe('parseServiceStatus', () => {
     };
     test('acepta el JSON del agente', () => {
         expect(parseServiceStatus(status)).toEqual(status);
-        expect(parseServiceStatus({ ...status, pid: null, metrics: null }).metrics).toBeNull();
+        expect(parseServiceStatus({ ...status, pid: null }).pid).toBeNull();
     });
     test('rechaza estados desconocidos', () => {
         expect(() => parseServiceStatus({ ...status, activeState: 'bailando' })).toThrow(TypeError);
@@ -99,7 +98,6 @@ describe('parseServiceStatus', () => {
             TypeError,
         );
         expect(() => parseServiceStatus({ ...status, host: null })).toThrow(TypeError);
-        expect(() => parseServiceStatus({ ...status, metrics: { rssBytes: '1' } })).toThrow(TypeError);
     });
 });
 
@@ -113,6 +111,7 @@ describe('parseServiceDeployment y parseServiceEnvironment', () => {
             setupCommands: ['npm ci'],
             startCommand: 'npm start',
             publishDir: null,
+            autoDeploy: true,
             updatedAt: 1,
         };
         expect(parseServiceDeployment(deployment)).toEqual(deployment);
@@ -215,7 +214,6 @@ describe('límites y servidor', () => {
             activeState: 'active',
             subState: 'running',
             pid: 1,
-            metrics: null,
             deployed: true,
             release: null,
             previousRelease: null,

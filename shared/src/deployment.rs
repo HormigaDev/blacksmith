@@ -42,6 +42,8 @@ pub struct ServiceDeployment {
     /// Carpeta del repositorio, tras la preparación, que se publica para nginx (p. ej. `dist`).
     /// `None` si el servicio no sirve archivos estáticos.
     pub publish_dir: Option<String>,
+    /// Se despliega solo al recibir un push a su rama (webhook de GitHub).
+    pub auto_deploy: bool,
     /// Segundos Unix de la última modificación; `None` si nunca se guardó.
     pub updated_at: Option<i64>,
 }
@@ -57,6 +59,26 @@ pub struct UpdateDeployment {
     pub start_command: String,
     #[serde(default)]
     pub publish_dir: Option<String>,
+    /// Desplegar al recibir un push a la rama (activado por defecto).
+    #[serde(default = "enabled")]
+    pub auto_deploy: bool,
+}
+
+fn enabled() -> bool {
+    true
+}
+
+impl Default for UpdateDeployment {
+    fn default() -> Self {
+        Self {
+            repository: None,
+            access: RepositoryAccess::default(),
+            setup_commands: Vec::new(),
+            start_command: String::new(),
+            publish_dir: None,
+            auto_deploy: true,
+        }
+    }
 }
 
 /// Llave de despliegue del servicio (solo la parte pública): se añade al repositorio como

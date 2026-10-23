@@ -32,10 +32,10 @@ use tokio::{
     time::Instant,
 };
 
-use super::services::slug;
 use crate::{
     error::{AppError, AppResult, DisplayChain},
     http::Path,
+    services::ServiceSlug,
     state::AppState,
     systemd::{JournalError, LogStream, UnitName},
 };
@@ -90,18 +90,18 @@ pub enum LogSource {
 
 pub async fn stream(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(slug): Path<ServiceSlug>,
     query: Result<Query<LogsQuery>, QueryRejection>,
     upgrade: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
 ) -> AppResult<Response> {
     let upgrade = upgrade?;
     let Query(query) =
         query.map_err(|rejection| AppError::BadRequest(rejection.body_text().into()))?;
-    let slug = slug(&name)?;
     state.services.unit_of(&slug).await?;
-    let unit = match query.source {
-        LogSource::Service => slug.unit(),
-        LogSource::Deploy => slug.deploy_unit(),
+    // Un despliegue son dos unidades: el clon y la preparación.
+    let units = match query.source {
+        LogSource::Service => vec![slug.unit()],
+        LogSource::Deploy => vec![slug.fetch_unit(), slug.deploy_unit()],
     };
     let permit = state
         .log_streams
@@ -109,8 +109,8 @@ pub async fn stream(
         .try_acquire_owned()
         .map_err(|_| AppError::LogStreamLimit(state.config.max_log_streams))?;
     let stream = match query.since {
-        Some(since) => state.journal.follow_since(&unit, since, SINCE_MAX_LINES)?,
-        None => state.journal.follow(&unit, LOG_BACKLOG_LINES)?,
+        Some(since) => state.journal.follow_since(&units, since, SINCE_MAX_LINES)?,
+        None => state.journal.follow(&units, LOG_BACKLOG_LINES)?,
     };
     let shutdown = state.shutdown.subscribe();
     let timings = state.log_timings;
@@ -120,7 +120,7 @@ pub async fn stream(
         .max_frame_size(MAX_INCOMING)
         .max_write_buffer_size(MAX_WRITE_BUFFER)
         .on_failed_upgrade(|error| tracing::debug!(%error, "handshake WebSocket fallido"))
-        .on_upgrade(move |socket| session(socket, stream, shutdown, permit, unit, timings)))
+        .on_upgrade(move |socket| session(socket, stream, shutdown, permit, units, timings)))
 }
 
 /// Cómo terminó la sesión.
@@ -137,10 +137,10 @@ async fn session(
     stream: LogStream,
     mut shutdown: watch::Receiver<bool>,
     _permit: OwnedSemaphorePermit,
-    unit: UnitName,
+    units: Vec<UnitName>,
     timings: LogTimings,
 ) {
-    tracing::info!(%unit, "flujo de logs abierto");
+    tracing::info!(?units, "flujo de logs abierto");
     let (entries, mut received) = mpsc::channel(CHANNEL_CAPACITY);
     let reader = tokio::spawn(read_journal(stream, entries));
 
@@ -192,11 +192,16 @@ async fn session(
         Ending::Shutdown => (LogEndReason::AgentShutdown, None, close_code::AWAY),
         Ending::TooSlow => (LogEndReason::ClientTooSlow, None, close_code::POLICY),
         Ending::ClientGone(why) => {
-            tracing::info!(%unit, motivo = why, "flujo de logs cerrado");
+            tracing::info!(?units, motivo = why, "flujo de logs cerrado");
             return;
         }
     };
-    tracing::info!(%unit, ?reason, detail = detail.as_deref(), "flujo de logs cerrado");
+    tracing::info!(
+        ?units,
+        ?reason,
+        detail = detail.as_deref(),
+        "flujo de logs cerrado"
+    );
     // Mejor esfuerzo: si el cliente ya no lee, no se insiste.
     if !matches!(reason, LogEndReason::ClientTooSlow) {
         let _ = send(

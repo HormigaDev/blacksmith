@@ -106,6 +106,22 @@ pub enum CommandError {
 }
 
 impl CommandError {
+    /// Respuesta de error del agente, con su código si trae el cuerpo de error habitual.
+    pub fn agent_rejected(status: u16, body: &[u8]) -> Self {
+        match serde_json::from_slice::<shared::ApiErrorBody>(body) {
+            Ok(error) => Self::AgentRejected {
+                status,
+                code: error.code,
+                message: error.message.into_owned(),
+            },
+            Err(_) => Self::AgentRejected {
+                status,
+                code: shared::ErrorCode::Unknown,
+                message: format!("respuesta {status} sin cuerpo de error"),
+            },
+        }
+    }
+
     pub fn internal(
         context: &'static str,
         source: impl Into<Box<dyn std::error::Error + Send + Sync>>,

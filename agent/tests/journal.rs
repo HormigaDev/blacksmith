@@ -46,7 +46,7 @@ fn fake() -> &'static Path {
 
 fn follow(unit: &str) -> LogStream {
     Journalctl::new(fake(), Scope::System)
-        .follow(&UnitName::new(unit).unwrap(), 100)
+        .follow(&[UnitName::new(unit).unwrap()], 100)
         .unwrap()
 }
 
@@ -84,11 +84,25 @@ async fn argumentos_y_entorno() {
 #[tokio::test]
 async fn desde_un_instante() {
     let mut stream = Journalctl::new(fake(), Scope::System)
-        .follow_since(&UnitName::new("eco").unwrap(), 1_792_713_740, 2000)
+        .follow_since(&[UnitName::new("eco").unwrap()], 1_792_713_740, 2000)
         .unwrap();
     assert_eq!(
         next_message(&mut stream).await,
         "--no-pager --quiet --output=json --output-fields=MESSAGE,PRIORITY,_PID,SYSLOG_IDENTIFIER --follow --merge --lines=2000 --since=@1792713740 --unit=eco.service"
+    );
+}
+
+/// Un despliegue se lee de dos unidades (clon y preparación): una opción `--unit` por cada una.
+#[tokio::test]
+async fn varias_unidades() {
+    let units = [UnitName::new("a").unwrap(), UnitName::new("eco").unwrap()];
+    let mut stream = Journalctl::new(fake(), Scope::System)
+        .follow(&units, 10)
+        .unwrap();
+    assert!(
+        next_message(&mut stream)
+            .await
+            .ends_with("--lines=10 --unit=a.service --unit=eco.service")
     );
 }
 
@@ -153,7 +167,7 @@ async fn programa_inexistente() {
     // script fallaría con ETXTBSY.
     fake();
     let result = Journalctl::new("/no/existe/journalctl", Scope::System)
-        .follow(&UnitName::new("x").unwrap(), 10);
+        .follow(&[UnitName::new("x").unwrap()], 10);
     assert!(matches!(result, Err(JournalError::Spawn(_))));
 }
 
@@ -185,7 +199,7 @@ async fn journal_real_de_usuario() {
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let mut stream = Journalctl::new("/usr/bin/journalctl", Scope::User)
-        .follow(&UnitName::new("blacksmith-prueba-log").unwrap(), 100)
+        .follow(&[UnitName::new("blacksmith-prueba-log").unwrap()], 100)
         .unwrap();
     let mut messages = Vec::new();
     while !messages.iter().any(|message: &String| message == "despues") {

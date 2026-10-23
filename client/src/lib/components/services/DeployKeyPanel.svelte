@@ -69,12 +69,16 @@
         }
     }
 
+    let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+    $effect(() => () => clearTimeout(copiedTimer));
+
     async function copy(): Promise<void> {
         if (!key) return;
         try {
             await navigator.clipboard.writeText(key.publicKey);
             copied = true;
-            setTimeout(() => (copied = false), 2000);
+            clearTimeout(copiedTimer);
+            copiedTimer = setTimeout(() => (copied = false), 2000);
         } catch (caught) {
             error = describeError(caught);
         }

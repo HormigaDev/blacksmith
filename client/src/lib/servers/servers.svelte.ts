@@ -25,6 +25,7 @@ import {
     type TunnelErrorCode,
     type TunnelInfo,
 } from '$lib/ssh';
+import { serviceStore } from '$lib/stores/services.svelte';
 import { toast } from '$lib/toast';
 
 export type ServerView = 'list' | 'grid';
@@ -160,6 +161,8 @@ class ServersState {
             // Un servidor local no tiene túnel: no hay nada que cerrar en Rust.
             if (entry.profile.kind === 'ssh') await closeTunnel(targetOf(entry.profile));
             this.#update(id, { status: 'disconnected', tunnel: undefined });
+            // Al volver a conectar se carga todo de nuevo: el servidor pudo cambiar entretanto.
+            serviceStore.forget(id);
         } catch (error) {
             toast.error(describeError(error));
         }
@@ -187,6 +190,7 @@ class ServersState {
         try {
             await removeServer(id);
             this.#entries = this.#entries.filter((candidate) => candidate.profile.id !== id);
+            serviceStore.forget(id);
         } catch (error) {
             toast.error(describeError(error));
         }
@@ -200,6 +204,7 @@ class ServersState {
             const entry = this.find(event.targetId);
             if (!entry || entry.status !== 'connected') return;
             this.#update(event.targetId, { status: 'disconnected', tunnel: undefined });
+            serviceStore.forget(event.targetId);
             if (event.reason === 'connectionLost') {
                 toast.warning(t('servers.connect.lost', { host: entry.profile.host }));
             }

@@ -11,7 +11,14 @@
     import Trash2Icon from '@lucide/svelte/icons/trash-2';
     import { untrack } from 'svelte';
 
-    import { ENV_KEY_PATTERN, type EnvVariable } from '$lib/agent';
+    import {
+        ENV_KEY_PATTERN,
+        envKeyTooLong,
+        envValueTooLong,
+        type EnvVariable,
+        hasControlChars,
+        MAX_ENV_VARIABLES,
+    } from '$lib/agent';
     import { describeError } from '$lib/http';
     import { t } from '$lib/i18n';
 
@@ -51,10 +58,11 @@
         return current.map(({ key, value }) => {
             const error: { key?: string; value?: string } = {};
             if (!ENV_KEY_PATTERN.test(key)) error.key = t('services.env.keyInvalid');
+            else if (envKeyTooLong(key)) error.key = t('services.env.keyTooLong', { max: 128 });
             else if (seen.has(key)) error.key = t('services.env.keyDuplicate');
             seen.add(key);
-            // eslint-disable-next-line no-control-regex
-            if (/[\u0000-\u001f\u007f-\u009f]/.test(value)) error.value = t('services.env.valueInvalid');
+            if (hasControlChars(value)) error.value = t('services.env.valueInvalid');
+            else if (envValueTooLong(value)) error.value = t('services.env.valueTooLong', { max: 32 });
             return error;
         });
     });
@@ -139,9 +147,12 @@
     {/if}
 
     {#if formError}<p class="alert" role="alert">{formError}</p>{/if}
+    {#if rows.length >= MAX_ENV_VARIABLES}
+        <p class="note">{t('services.env.tooMany', { max: MAX_ENV_VARIABLES })}</p>
+    {/if}
 
     <div class="actions">
-        <Button onclick={add}>
+        <Button onclick={add} disabled={rows.length >= MAX_ENV_VARIABLES}>
             <PlusIcon />
             {t('services.env.add')}
         </Button>
@@ -172,6 +183,11 @@
 {/if}
 
 <style>
+    .note {
+        font-size: var(--font-size-sm);
+        color: var(--color-text-muted);
+    }
+
     .editor {
         display: flex;
         flex-direction: column;

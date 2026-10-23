@@ -29,7 +29,6 @@
         activeState: 'active',
         subState: 'running',
         pid: 1234,
-        metrics: null,
         deployed: true,
         release: 'r1799990000-000000000',
         previousRelease: 'r1799900000-000000000',

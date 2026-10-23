@@ -10,7 +10,7 @@ use crate::{
     nginx::SiteManager,
     routes::logs::LogTimings,
     services::ServiceManager,
-    systemd::{DEFAULT_TIMEOUT, JOURNALCTL_PATH, Journalctl, SYSTEMCTL_PATH, Systemctl},
+    systemd::{DEFAULT_TIMEOUT, JOURNALCTL_PATH, Journalctl, SYSTEMCTL_PATH, Scope, Systemctl},
 };
 
 /// Margen para que una acción que se agota responda `SYSTEMD_TIMEOUT` (con su diagnóstico)
@@ -59,7 +59,7 @@ impl AppState {
         let sites = SiteManager::new(
             db.clone(),
             systemctl.system(),
-            JOURNALCTL_PATH,
+            Journalctl::new(JOURNALCTL_PATH, Scope::System),
             paths.clone(),
             config.bind_addr.port(),
         );

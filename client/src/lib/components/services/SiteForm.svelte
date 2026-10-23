@@ -19,7 +19,18 @@
     import XIcon from '@lucide/svelte/icons/x';
     import { untrack } from 'svelte';
 
-    import { proxies, servesFiles, type Site, type SiteConfig, SITE_TEMPLATES, type SiteTemplate } from '$lib/agent';
+    import {
+        MAX_PRIMARY_DOMAIN_LENGTH,
+        MAX_SITE_DOMAINS,
+        proxies,
+        servesFiles,
+        type Site,
+        type SiteConfig,
+        SITE_TEMPLATES,
+        type SiteTemplate,
+        validDomain,
+        validEmail,
+    } from '$lib/agent';
     import { describeError } from '$lib/http';
     import { t } from '$lib/i18n';
 
@@ -80,20 +91,22 @@
     const needsFiles = $derived(servesFiles(template));
 
     /** Mismas reglas que el agente (nginx::sites::validate). */
-    const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]*[a-z][a-z0-9-]*$/;
     const LOCAL = ['.localhost', '.local', '.test', '.internal', '.lan', '.home.arpa'];
     const normalize = (domain: string) => domain.trim().replace(/\.$/, '').toLowerCase();
     const domains = $derived([primary, ...aliases.split(',')].map(normalize).filter((domain) => domain !== ''));
-    const validDomain = (domain: string) => domain === 'localhost' || DOMAIN.test(domain);
     const primaryError = $derived.by(() => {
         const domain = normalize(primary);
         if (!domain) return t('services.site.domainRequired');
-        return validDomain(domain) ? undefined : t('services.site.domainInvalid');
+        if (!validDomain(domain)) return t('services.site.domainInvalid');
+        return domain.length > MAX_PRIMARY_DOMAIN_LENGTH
+            ? t('services.site.domainTooLong', { max: MAX_PRIMARY_DOMAIN_LENGTH })
+            : undefined;
     });
     const aliasesError = $derived.by(() => {
         const list = domains.slice(1);
         if (list.some((domain) => !validDomain(domain))) return t('services.site.domainInvalid');
         if (new Set(domains).size !== domains.length) return t('services.site.domainRepeated');
+        if (domains.length > MAX_SITE_DOMAINS) return t('services.site.domainTooMany', { max: MAX_SITE_DOMAINS });
         return undefined;
     });
     const portError = $derived.by(() => {
@@ -154,9 +167,7 @@
             : undefined,
     );
     const emailError = $derived(
-        https && email.trim() && !/^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(email.trim())
-            ? t('services.site.emailInvalid')
-            : undefined,
+        https && email.trim() && !validEmail(email.trim()) ? t('services.site.emailInvalid') : undefined,
     );
 
     const tlsBadge = $derived(

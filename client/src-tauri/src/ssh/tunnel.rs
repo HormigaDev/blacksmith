@@ -43,7 +43,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 /// Keepalives sin respuesta antes de dar la conexión por perdida (~45 s).
 const KEEPALIVE_MAX: usize = 3;
-/// Conexiones locales simultáneas por túnel.
+const ACCEPT_RETRY: Duration = Duration::from_millis(50);
 const MAX_CONNECTIONS: usize = 64;
 
 pub struct TunnelConfig {
@@ -295,7 +295,12 @@ async fn forward_loop(
             _ = lost.changed() => break,
             Some(_) = connections.join_next(), if !connections.is_empty() => {}
             accepted = listener.accept() => {
-                let Ok((socket, peer)) = accepted else { continue };
+                let Ok((socket, peer)) = accepted else {
+                    // Un error persistente (p. ej. sin descriptores libres) haría girar el bucle
+                    // sin pausa.
+                    tokio::time::sleep(ACCEPT_RETRY).await;
+                    continue;
+                };
                 // Sin cupo se rechaza la conexión en vez de encolarla.
                 let Ok(permit) = Arc::clone(&limit).try_acquire_owned() else { continue };
                 let handle = Arc::clone(&handle);

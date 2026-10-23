@@ -19,6 +19,7 @@
 
     $effect(() => {
         if (service && service.limits === null) {
+            loadError = null;
             service.loadLimits().catch((error: unknown) => (loadError = describeError(error)));
         }
     });

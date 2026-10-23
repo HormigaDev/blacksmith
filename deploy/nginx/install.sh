@@ -14,7 +14,8 @@
 #     sobrescriben: son suyas para editarlas.
 #   - /var/lib/blacksmith-acme: desafíos de Let's Encrypt.
 #   - blacksmith-nginx.service y blacksmith-certbot@.service: lo único que corre como root por cuenta del
-#     agente (validar/recargar nginx y pedir certificados), y la regla de polkit que se lo permite.
+#     agente (validar/recargar nginx y pedir certificados), con sus scripts en /usr/local/lib/blacksmith
+#     (check-sites.sh, certbot.sh), y la regla de polkit que se lo permite.
 set -eu
 
 [ "$(id -u)" -eq 0 ] || { echo "ejecútelo como root" >&2; exit 1; }
@@ -33,12 +34,21 @@ if [ "$MODE" = local ]; then
     }
     HOME_DIR=$(getent passwd "$AGENT_USER" | cut -d: -f6)
     STATE=$HOME_DIR/.local/state
+    # Si faltan, se crean del usuario: `install -d` crearía los padres como root.
+    for dir in "$HOME_DIR/.local" "$STATE"; do
+        [ -d "$dir" ] || install -d -m 0700 -o "$AGENT_USER" "$dir"
+    done
 else
     AGENT_USER=blacksmith
     STATE=/var/lib
 fi
 SITES_DIR=$STATE/blacksmith/nginx/sites
 CERTS_DIR=$STATE/blacksmith/nginx/certs
+APPS_ROOT=$STATE/blacksmith-apps
+# Las rutas van a `sed` y a unidades de systemd: nada que pueda romperlos.
+case "$STATE" in
+    *[!A-Za-z0-9/._-]*) echo "ruta no admitida (solo letras, dígitos y . _ - /): $STATE" >&2; exit 1 ;;
+esac
 
 echo "==> Modo $MODE (agente: $AGENT_USER)"
 
@@ -49,8 +59,9 @@ install -d -m 0755 /var/lib/blacksmith-acme
 echo "==> Snippets y ajustes comunes"
 install -d -m 0755 /etc/nginx/snippets/blacksmith
 install -m 0644 "$HERE"/snippets/blacksmith/*.conf /etc/nginx/snippets/blacksmith/
-sed "s|@SITES_DIR@|$SITES_DIR|" "$HERE/conf.d/blacksmith.conf" >/etc/nginx/conf.d/blacksmith.conf
-chmod 0644 /etc/nginx/conf.d/blacksmith.conf
+# Se instala al final, tras validarla (ver «Validando»): con un error, nginx seguiría con la anterior.
+COMMON=$(mktemp)
+sed "s|@SITES_DIR@|$SITES_DIR|" "$HERE/conf.d/blacksmith.conf" >"$COMMON"
 
 if grep -rqsE 'listen[^;]*default_server' /etc/nginx/sites-enabled /etc/nginx/conf.d --exclude=blacksmith-default.conf; then
     echo "    aviso: ya hay un default_server (p. ej. /etc/nginx/sites-enabled/default): no se instala"
@@ -72,9 +83,12 @@ for template in "$HERE"/templates/*.conf; do
 done
 
 echo "==> Unidades privilegiadas"
-install -m 0644 "$HERE/systemd/blacksmith-nginx.service" /etc/systemd/system/blacksmith-nginx.service
+install -d -m 0755 /usr/local/lib/blacksmith
+install -m 0755 "$HERE/check-sites.sh" "$HERE/certbot.sh" /usr/local/lib/blacksmith/
+sed -e "s|@SITES_DIR@|$SITES_DIR|" -e "s|@APPS_ROOT@|$APPS_ROOT|" "$HERE/systemd/blacksmith-nginx.service" \
+    >/etc/systemd/system/blacksmith-nginx.service
 sed "s|@CERTS_DIR@|$CERTS_DIR|" "$HERE/systemd/blacksmith-certbot@.service" >/etc/systemd/system/blacksmith-certbot@.service
-chmod 0644 /etc/systemd/system/blacksmith-certbot@.service
+chmod 0644 /etc/systemd/system/blacksmith-nginx.service /etc/systemd/system/blacksmith-certbot@.service
 systemctl daemon-reload
 
 echo "==> polkit"
@@ -98,7 +112,19 @@ fi
 command -v certbot >/dev/null || echo "    aviso: certbot no está instalado (apt install certbot): no habrá HTTPS"
 
 echo "==> Validando y recargando nginx"
-nginx -t
+TARGET=/etc/nginx/conf.d/blacksmith.conf
+BACKUP=$(mktemp)
+had_previous=no
+if [ -e "$TARGET" ]; then cp -p "$TARGET" "$BACKUP" && had_previous=yes; fi
+install -m 0644 "$COMMON" "$TARGET"
+rm -f "$COMMON"
+if ! nginx -t; then
+    if [ "$had_previous" = yes ]; then install -m 0644 "$BACKUP" "$TARGET"; else rm -f "$TARGET"; fi
+    rm -f "$BACKUP"
+    echo "nginx rechazó la configuración: se restauró la anterior" >&2
+    exit 1
+fi
+rm -f "$BACKUP"
 systemctl enable --quiet nginx
 systemctl reload-or-restart nginx
 echo "Listo."

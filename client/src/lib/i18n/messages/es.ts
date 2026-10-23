@@ -14,6 +14,7 @@ export default {
         close: 'Cerrar',
         loading: 'Cargando…',
         required: 'Obligatorio',
+        retry: 'Reintentar',
     },
     theme: {
         label: 'Tema',
@@ -280,6 +281,9 @@ export default {
             keyInvalid: 'Letras, dígitos y _; sin empezar por un dígito.',
             keyDuplicate: 'Clave repetida.',
             valueInvalid: 'Sin saltos de línea ni caracteres de control.',
+            keyTooLong: 'Como mucho {max} bytes.',
+            valueTooLong: 'Como mucho {max} KB.',
+            tooMany: 'Como mucho {max} variables.',
             notLoaded:
                 'systemd no cargará este archivo: falta el drop-in deploy/systemd/blacksmith-.service.d/ en el servidor o la unidad aún no existe.',
         },
@@ -395,6 +399,8 @@ export default {
             domainRequired: 'Indica el dominio.',
             domainInvalid: 'Un dominio como ejemplo.com o app.ejemplo.com, sin comodines ni IPs.',
             domainRepeated: 'Hay dominios repetidos.',
+            domainTooMany: 'Como mucho {max} dominios.',
+            domainTooLong: 'El dominio principal no puede pasar de {max} caracteres.',
             port: 'Puerto del servicio',
             portHint: 'El servicio debe escuchar en 127.0.0.1:{port} (p. ej. con la variable PORT).',
             portInvalid: 'Un puerto entre 1024 y 65535.',
@@ -514,6 +520,10 @@ export default {
             repositoryHint: '¿No aparece? Da acceso a la App a ese repositorio desde GitHub.',
             branch: 'Rama',
             branchLoading: 'Cargando ramas…',
+            autoDeploy: 'Desplegar al hacer push',
+            autoDeployHint:
+                'Cada push a la rama despliega el servicio (necesita el webhook de GitHub en el servidor, ver README).',
+            branchInvalid: 'Nombre de rama no válido para git (sin espacios, `..`, `~ ^ : ? * [`…).',
             workingDirectory: 'Directorio de trabajo',
             setupTitle: 'Preparación',
             command: 'Comando {index}',

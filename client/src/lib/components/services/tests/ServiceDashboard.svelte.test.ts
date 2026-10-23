@@ -15,7 +15,6 @@ const status = (overrides: Partial<ServiceStatus['resources']> = {}, active = tr
     activeState: active ? 'active' : 'inactive',
     subState: active ? 'running' : 'dead',
     pid: active ? 1234 : null,
-    metrics: null,
     deployed: true,
     release: 'r1799990000-000000000',
     previousRelease: null,

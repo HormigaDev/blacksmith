@@ -1,35 +1,36 @@
 # Generada por Blacksmith (agent/src/deploy/units.rs): no la edite a mano.
-# Servicio desplegado %i: ejecuta la versión activa (%S/blacksmith/%i/app).
+# Servicio desplegado %i: ejecuta la versión activa (%S/blacksmith-apps/%i/app).
 
 [Unit]
 Description=Blacksmith: %i
 After=network-online.target
 Wants=network-online.target
 # Sin una versión desplegada no hay nada que arrancar.
-ConditionPathIsSymbolicLink=%S/blacksmith/%i/app
+ConditionPathIsSymbolicLink=%S/blacksmith-apps/%i/app
 
 [Service]
 Type=exec
-User=blacksmith
-Group=blacksmith
-StateDirectory=blacksmith/%i
+User=blacksmith-apps
+Group=blacksmith-apps
+StateDirectory=blacksmith-apps/%i
 StateDirectoryMode=0711
 UMask=0077
 CPUAccounting=yes
 MemoryAccounting=yes
 TasksAccounting=yes
-Environment=HOME=%S/blacksmith/%i
+Environment=HOME=%S/blacksmith-apps/%i
 EnvironmentFile=-%E/blacksmith/env/global.env
 EnvironmentFile=-%E/blacksmith/env/services/%i.env
-WorkingDirectory=%S/blacksmith/%i/app
+WorkingDirectory=%S/blacksmith-apps/%i/app
 ExecStart=/opt/blacksmith/bin/blacksmith-agent run-service
 Restart=on-failure
 RestartSec=3
-# Solo su directorio: los demás servicios, las variables y los datos del agente no existen.
-TemporaryFileSystem=%S/blacksmith:ro
-BindPaths=%S/blacksmith/%i
-InaccessiblePaths=-%E/blacksmith
+TemporaryFileSystem=%S/blacksmith-apps:ro
+BindPaths=%S/blacksmith-apps/%i
+InaccessiblePaths=-%S/blacksmith-fetch
 InaccessiblePaths=-%S/blacksmith
+InaccessiblePaths=-%E/blacksmith
+InaccessiblePaths=-/run/dbus
 ProtectProc=invisible
 NoNewPrivileges=yes
 ProtectSystem=strict

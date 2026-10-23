@@ -3,8 +3,8 @@
 #
 # - Desafío HTTP-01 por webroot: nginx sirve /var/lib/blacksmith-acme (snippets/blacksmith/acme.conf). No se
 #   detiene nginx ni se toca su configuración: certbot solo escribe el desafío y el certificado.
-# - Los demás dominios y el email salen de un archivo que escribe el agente con valores ya
-#   validados (solo dominios y una dirección de correo).
+# - Los dominios y el correo salen de un archivo que escribe el agente (un usuario sin
+#   privilegios): certbot.sh los vuelve a validar y construye él los argumentos de certbot.
 # - Renovación: el temporizador del paquete certbot; tras renovar recarga nginx (deploy-hook, que
 #   certbot guarda en la configuración de renovación).
 
@@ -16,7 +16,5 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 EnvironmentFile=@CERTS_DIR@/%i.env
-ExecStart=/usr/bin/certbot certonly --webroot --webroot-path /var/lib/blacksmith-acme \
-    --non-interactive --agree-tos --keep-until-expiring --cert-name %i \
-    $BLACKSMITH_CERTBOT_ARGS --deploy-hook "systemctl reload nginx"
+ExecStart=/usr/local/lib/blacksmith/certbot.sh %i
 TimeoutStartSec=5min

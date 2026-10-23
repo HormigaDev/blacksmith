@@ -12,15 +12,13 @@
 
 pub mod deployment;
 
-use std::{fmt, path::PathBuf, str::FromStr, time::Duration};
-
-use rustix::process::Pid;
+use std::{fmt, path::PathBuf, sync::Arc, time::Duration};
 
 use shared::{
     ActiveState, DeployKey, DeployKind, DeployRun, DeployStatus, EnvVariable, GitHubAccess,
     GlobalEnvironment, RegisterService, RepositoryAccess, ResourceLimits, ServiceActionReport,
-    ServiceDeployment, ServiceEnvironment, ServiceLimits, ServiceOutcome, ServiceStatusReport,
-    ServiceSummary, SetGitHubAccess, UpdateDeployment,
+    ServiceDeployment, ServiceEnvironment, ServiceLimits, ServiceStatusReport, ServiceSummary,
+    SetGitHubAccess, UpdateDeployment,
 };
 
 use self::deployment::InvalidDeployment;
@@ -40,22 +38,24 @@ use crate::{
     error::DisplayChain,
     github::{GitHubAccessError, GitHubStore},
     limits::{self, InvalidLimits},
-    metrics::{MetricsError, ProcessSampler},
     resources::{CgroupCpu, host_capacity},
-    systemd::{Action, Outcome, Systemctl, SystemctlError, UnitName},
+    systemd::{Action, Systemctl, SystemctlError, UnitName},
 };
 
 /// Plantilla de los servicios desplegados: `blacksmith@<nombre>.service` (deploy/systemd/blacksmith@.service).
 /// Su propia unidad (`blacksmith.service`) no encaja, así que el agente no puede pararse a sí mismo.
 pub const MANAGED_UNIT_PREFIX: &str = "blacksmith@";
 
-/// Plantilla del despliegue: `blacksmith-deploy@<nombre>.service` clona, prepara y activa una versión.
+/// Plantilla del clon: `blacksmith-fetch@<nombre>.service` descarga la rama con las credenciales.
+pub const FETCH_UNIT_PREFIX: &str = "blacksmith-fetch@";
+
+/// Plantilla del despliegue: `blacksmith-deploy@<nombre>.service` prepara y activa una versión.
 pub const DEPLOY_UNIT_PREFIX: &str = "blacksmith-deploy@";
 
-/// Patrón de las unidades gestionadas (servicios y despliegues). Debe coincidir literalmente con
-/// el de la regla de polkit (lo comprueba un test).
+/// Patrón de las unidades gestionadas (servicios, clones y despliegues). Debe coincidir
+/// literalmente con el de la regla de polkit (lo comprueba un test).
 pub const MANAGED_UNIT_PATTERN: &str =
-    r"^blacksmith(-deploy)?@[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?\.service$";
+    r"^blacksmith(-deploy|-fetch)?@[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?\.service$";
 
 const SLUG_MAX_LEN: usize = 48;
 
@@ -76,8 +76,9 @@ impl fmt::Display for ServiceId {
 }
 
 /// Nombre corto y estable de un servicio: `[a-z0-9-]`, de 1 a 48 caracteres, sin guion al
-/// principio ni al final. Define su unidad: `blacksmith-<slug>.service`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// principio ni al final. Define su unidad: `blacksmith@<slug>.service`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Deserialize)]
+#[serde(try_from = "String")]
 pub struct ServiceSlug(String);
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -121,22 +122,25 @@ impl ServiceSlug {
         &self.0
     }
 
-    /// Unidad de systemd del servicio.
     pub fn unit(&self) -> UnitName {
         UnitName::from_validated(format!("{MANAGED_UNIT_PREFIX}{}.service", self.0))
     }
 
-    /// Unidad que despliega el servicio (clona, prepara y activa una versión).
+    pub fn fetch_unit(&self) -> UnitName {
+        UnitName::from_validated(format!("{FETCH_UNIT_PREFIX}{}.service", self.0))
+    }
+
     pub fn deploy_unit(&self) -> UnitName {
         UnitName::from_validated(format!("{DEPLOY_UNIT_PREFIX}{}.service", self.0))
     }
 }
 
-impl FromStr for ServiceSlug {
-    type Err = InvalidSlug;
+// Para recibirlo ya validado en las rutas (`Path<ServiceSlug>`).
+impl TryFrom<String> for ServiceSlug {
+    type Error = InvalidSlug;
 
-    fn from_str(slug: &str) -> Result<Self, Self::Err> {
-        Self::new(slug)
+    fn try_from(slug: String) -> Result<Self, Self::Error> {
+        Self::new(&slug)
     }
 }
 
@@ -243,9 +247,6 @@ pub enum ServiceError {
     #[error(transparent)]
     Systemctl(#[from] SystemctlError),
 
-    #[error("no se pudo medir el proceso")]
-    Metrics(#[from] MetricsError),
-
     #[error(transparent)]
     Database(#[from] DbError),
 
@@ -294,6 +295,21 @@ pub enum ServiceError {
 
     #[error(transparent)]
     InvalidLimits(#[from] InvalidLimits),
+
+    #[error("la tarea de archivos se interrumpió")]
+    Task(#[from] tokio::task::JoinError),
+}
+
+/// Trabajo de archivos en un hilo aparte, para no bloquear el runtime.
+async fn blocking<T, E>(
+    task: impl FnOnce() -> Result<T, E> + Send + 'static,
+) -> Result<T, ServiceError>
+where
+    T: Send + 'static,
+    E: Send + 'static,
+    ServiceError: From<E>,
+{
+    Ok(tokio::task::spawn_blocking(task).await??)
 }
 
 /// Credenciales de un despliegue (vacías si no hacen falta).
@@ -338,7 +354,9 @@ pub struct ServiceManager {
     ssh_clone_base: String,
     github: GitHubStore,
     cgroup_cpu: CgroupCpu,
-    sampler: ProcessSampler,
+    /// Guardar la definición comprueba que el repositorio no cambie y luego escribe: dos guardados
+    /// a la vez podrían fijar repositorios distintos.
+    deployment_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl ServiceManager {
@@ -352,11 +370,13 @@ impl ServiceManager {
             paths,
             clone_base: GITHUB_CLONE_BASE.to_owned(),
             ssh_clone_base: GITHUB_SSH_BASE.to_owned(),
-            sampler: ProcessSampler::default(),
+            deployment_lock: Arc::default(),
         }
     }
 
     /// Otra base para las URL de clon (`<base><dueño>/<repo>.git`), por HTTPS y por SSH.
+    /// Solo para tests (un repositorio local en lugar de GitHub).
+    #[doc(hidden)]
     pub fn with_clone_base(mut self, base: impl Into<String>) -> Self {
         self.clone_base = base.into();
         self.ssh_clone_base = self.clone_base.clone();
@@ -371,9 +391,7 @@ impl ServiceManager {
     pub async fn deploy_key(&self, slug: &ServiceSlug) -> Result<Option<DeployKey>, ServiceError> {
         self.registered(slug).await?;
         let dir = self.key_dir(slug);
-        Ok(tokio::task::spawn_blocking(move || keys::read(&dir))
-            .await
-            .map_err(DbError::from)??)
+        blocking(move || keys::read(&dir)).await
     }
 
     /// Genera la llave de despliegue (si no existe) y devuelve su parte pública.
@@ -385,9 +403,7 @@ impl ServiceManager {
             .to_string_lossy()
             .into_owned();
         let comment = format!("blacksmith-{slug}@{host}");
-        let key = tokio::task::spawn_blocking(move || keys::ensure(&dir, &comment))
-            .await
-            .map_err(DbError::from)??;
+        let key = blocking(move || keys::ensure(&dir, &comment)).await?;
         tracing::info!(name = %slug, fingerprint = %key.fingerprint, "llave de despliegue lista");
         Ok(key)
     }
@@ -442,9 +458,8 @@ impl ServiceManager {
             },
             RepositoryAccess::DeployKey => {
                 let dir = self.key_dir(slug);
-                let key = tokio::task::spawn_blocking(move || keys::private(&dir))
-                    .await
-                    .map_err(DbError::from)??
+                let key = blocking(move || keys::private(&dir))
+                    .await?
                     .ok_or(ServiceError::DeployKeyMissing)?;
                 Credentials {
                     token: String::new(),
@@ -475,6 +490,39 @@ impl ServiceManager {
             credentials,
         )
         .await
+    }
+
+    /// Push a una rama (webhook): despliega cada servicio de ese repositorio y esa rama con el
+    /// despliegue automático activado. Uno que
+    /// ya está desplegando o al que le falta algo se salta (queda en el log), sin parar al resto.
+    pub async fn deploy_on_push(
+        &self,
+        owner: &str,
+        name: &str,
+        branch: &str,
+    ) -> Result<Vec<String>, ServiceError> {
+        let mut deployed = Vec::new();
+        for service in self.db.services().await? {
+            let Some((definition, _)) = self.db.deployment(service.id).await? else {
+                continue;
+            };
+            let matches = definition.auto_deploy
+                && definition.repository.is_some_and(|repository| {
+                    repository.owner.eq_ignore_ascii_case(owner)
+                        && repository.name.eq_ignore_ascii_case(name)
+                        && repository.branch == branch
+                });
+            if !matches {
+                continue;
+            }
+            match self.deploy(&service.slug).await {
+                Ok(_) => deployed.push(service.slug.to_string()),
+                Err(error) => {
+                    tracing::warn!(name = %service.slug, error = %DisplayChain(&error), "push sin desplegar");
+                }
+            }
+        }
+        Ok(deployed)
     }
 
     /// Vuelve a la versión anterior (ya construida en el servidor): no clona ni ejecuta la
@@ -515,6 +563,12 @@ impl ServiceManager {
         credentials: Credentials,
     ) -> Result<DeployRun, ServiceError> {
         let slug = &service.slug;
+        // Un despliegue que el agente ya no registra (p. ej. tras perder la base de datos) puede
+        // seguir en marcha: lanzar otro encima pisaría su especificación.
+        if self.unit_active(&slug.fetch_unit()).await || self.unit_active(&slug.deploy_unit()).await
+        {
+            return Err(ServiceError::DeployInProgress);
+        }
         let dir = self.paths.deployment_dir(slug);
         let spec = DeploySpec {
             release: release.clone(),
@@ -539,8 +593,7 @@ impl ServiceManager {
                 files::write_private(&dir.join(TOKEN_CREDENTIAL), credentials.token.as_bytes())?;
                 files::write_private(&dir.join(DEPLOY_KEY_CREDENTIAL), &credentials.deploy_key)
             })
-            .await
-            .map_err(DbError::from)??;
+            .await??;
             Ok::<_, ServiceError>(())
         };
         if let Err(error) = prepared.await {
@@ -551,33 +604,93 @@ impl ServiceManager {
             return Err(error);
         }
         tracing::info!(name = %slug, run = run.id, ?kind, release = %run.release, "despliegue iniciado");
-        tokio::spawn(self.clone().follow_deploy(service.clone(), run.clone()));
+        let fetch = run.kind == DeployKind::Deploy;
+        tokio::spawn(
+            self.clone()
+                .follow_deploy(service.clone(), run.clone(), fetch),
+        );
         Ok(run)
     }
 
-    /// Ejecuta la unidad de despliegue esperando a que termine (su resultado es el del trabajo).
-    /// Si activó la versión, la registra como activa (aunque luego el servicio no arranque: así
-    /// se puede volver a la anterior) y reinicia el servicio con ella.
-    async fn follow_deploy(self, service: Service, run: DeployRun) {
-        // Algo más que el `TimeoutStartSec=` de la plantilla (30 min): quien corta es systemd.
-        const LIMIT: Duration = Duration::from_secs(31 * 60);
+    /// Ejecuta el clon (si la tarea construye) y después la unidad de despliegue, esperando a que
+    /// terminen (su resultado es el del trabajo). Si se activó la versión, la registra como activa
+    /// (aunque luego el servicio no arranque: así se puede volver a la anterior) y reinicia el
+    /// servicio con ella.
+    async fn follow_deploy(self, service: Service, run: DeployRun, fetch: bool) {
         let slug = service.slug.clone();
-        let activated = self
-            .systemctl
-            .run_with_timeout(Action::Start, &slug.deploy_unit(), LIMIT)
-            .await
-            .map(|_| ())
-            .map_err(|error| match error {
-                SystemctlError::JobFailed { .. } => match run.kind {
-                    DeployKind::Deploy => "el despliegue falló: revisa sus logs".to_owned(),
-                    DeployKind::Rollback => {
-                        "no se pudo volver a la versión anterior: revisa los logs".to_owned()
-                    }
-                },
+        let outcome = self.run_deploy_units(&service, &run, fetch).await;
+        if let Ok(started) = outcome
+            && let Err(error) = self.db.set_autostart(service.id, started).await
+        {
+            tracing::warn!(name = %slug, %error, "no se pudo marcar el arranque automático");
+        }
+        let (status, detail) = match outcome {
+            Ok(_) => (DeployStatus::Succeeded, None),
+            Err(detail) => (DeployStatus::Failed, Some(detail)),
+        };
+        tracing::info!(name = %slug, run = run.id, ?status, detail = detail.as_deref(), "despliegue terminado");
+        if let Err(error) = self.db.finish_deploy_run(run.id, status, detail).await {
+            tracing::error!(name = %slug, run = run.id, %error, "no se pudo guardar el resultado del despliegue");
+        }
+    }
+
+    /// Devuelve si el servicio quedó en marcha, o el motivo del fallo.
+    async fn run_deploy_units(
+        &self,
+        service: &Service,
+        run: &DeployRun,
+        fetch: bool,
+    ) -> Result<bool, String> {
+        // Algo más que el `TimeoutStartSec=` de las plantillas: quien corta es systemd.
+        const FETCH_LIMIT: Duration = Duration::from_secs(11 * 60);
+        const DEPLOY_LIMIT: Duration = Duration::from_secs(31 * 60);
+        let slug = &service.slug;
+        let failed = |unit: &'static str| {
+            move |error: SystemctlError| match error {
+                SystemctlError::JobFailed { .. } => format!("{unit}: revisa sus logs"),
                 other => DisplayChain(&other).to_string(),
-            });
-        // Las copias del token y de la llave solo hacen falta mientras corre la unidad.
-        let dir = self.paths.deployment_dir(&slug);
+            }
+        };
+        if fetch {
+            let fetched = self
+                .systemctl
+                .run_with_timeout(Action::Start, &slug.fetch_unit(), FETCH_LIMIT)
+                .await
+                .map_err(failed("no se pudo descargar la rama"));
+            // Las copias del token y de la llave solo hacen falta durante el clon.
+            self.remove_credential_copies(slug).await;
+            fetched?;
+        }
+        self.systemctl
+            .run_with_timeout(Action::Start, &slug.deploy_unit(), DEPLOY_LIMIT)
+            .await
+            .map_err(failed(match run.kind {
+                DeployKind::Deploy => "el despliegue falló",
+                DeployKind::Rollback => "no se pudo volver a la versión anterior",
+            }))?;
+        self.db
+            .activate_release(service.id, run.release.clone())
+            .await
+            .map_err(|error| {
+                format!("versión activa en el servidor, pero no se pudo registrar: {error}")
+            })?;
+        // Un sitio solo estático no tiene proceso: nginx ya sirve la versión nueva.
+        if !self
+            .runnable(service)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            return Ok(false);
+        }
+        self.systemctl
+            .run(Action::Restart, &slug.unit())
+            .await
+            .map(|_| true)
+            .map_err(|error| format!("versión activa, pero el servicio no arrancó: {error}"))
+    }
+
+    async fn remove_credential_copies(&self, slug: &ServiceSlug) {
+        let dir = self.paths.deployment_dir(slug);
         let removed = tokio::task::spawn_blocking(move || {
             files::remove(&dir.join(TOKEN_CREDENTIAL))?;
             files::remove(&dir.join(DEPLOY_KEY_CREDENTIAL))
@@ -586,44 +699,78 @@ impl ServiceManager {
         if !matches!(removed, Ok(Ok(()))) {
             tracing::warn!(name = %slug, "no se pudieron borrar las copias de las credenciales");
         }
-        let outcome = match activated {
-            Ok(()) => {
-                if let Err(error) = self
-                    .db
-                    .activate_release(service.id, run.release.clone())
-                    .await
-                {
-                    tracing::error!(name = %slug, %error, "no se pudo registrar la versión activa");
-                }
-                // Un sitio solo estático no tiene proceso: nginx ya sirve la versión nueva.
-                if self.runnable(&service).await {
-                    self.systemctl
-                        .run(Action::Restart, &slug.unit())
-                        .await
-                        .map(|_| true)
-                        .map_err(|error| {
-                            format!("versión activa, pero el servicio no arrancó: {error}")
-                        })
-                } else {
-                    Ok(false)
-                }
+    }
+
+    /// Al arrancar el agente: retoma los despliegues que dejó a medias. Sus unidades siguen en
+    /// systemd aunque el agente se reinicie; `start` sobre una que ya arranca se une a su trabajo y
+    /// devuelve su resultado. Si ninguna sigue activa, no hay forma de saber cómo terminó: se da
+    /// por interrumpido. Las copias de credenciales que quedaran se borran (el clon en curso ya
+    /// las cargó al arrancar).
+    pub async fn recover_deploys(self) {
+        let dir = self.paths.deployments_dir.clone();
+        let cleaned = tokio::task::spawn_blocking(move || {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                return Ok(());
+            };
+            for entry in entries.flatten() {
+                files::remove(&entry.path().join(TOKEN_CREDENTIAL))?;
+                files::remove(&entry.path().join(DEPLOY_KEY_CREDENTIAL))?;
             }
-            Err(error) => Err(error),
-        };
-        if let Ok(started) = outcome
-            && let Err(error) = self.db.set_autostart(slug.clone(), started).await
-        {
-            tracing::warn!(name = %slug, %error, "no se pudo marcar el arranque automático");
+            Ok::<_, FileError>(())
+        })
+        .await;
+        if !matches!(cleaned, Ok(Ok(()))) {
+            tracing::warn!("no se pudieron borrar las copias de credenciales pendientes");
         }
-        let outcome = outcome.map(|_| ());
-        let (status, detail) = match outcome {
-            Ok(()) => (DeployStatus::Succeeded, None),
-            Err(detail) => (DeployStatus::Failed, Some(detail)),
+        let ids = match self.db.services_deploying().await {
+            Ok(ids) => ids,
+            Err(error) => {
+                tracing::error!(%error, "no se pudieron leer los despliegues pendientes");
+                return;
+            }
         };
-        tracing::info!(name = %slug, run = run.id, ?status, detail = detail.as_deref(), "despliegue terminado");
-        if let Err(error) = self.db.finish_deploy_run(run.id, status, detail).await {
-            tracing::error!(name = %slug, run = run.id, %error, "no se pudo guardar el resultado del despliegue");
+        for id in ids {
+            let (Ok(Some(service)), Ok(runs)) =
+                (self.db.service(id).await, self.db.deploy_runs(id, 1).await)
+            else {
+                continue;
+            };
+            let Some(run) = runs.into_iter().next() else {
+                continue;
+            };
+            let slug = service.slug.clone();
+            if self.unit_active(&slug.deploy_unit()).await {
+                tracing::info!(name = %slug, run = run.id, "retomando el despliegue en curso");
+                tokio::spawn(self.clone().follow_deploy(service, run, false));
+            } else if run.kind == DeployKind::Deploy && self.unit_active(&slug.fetch_unit()).await {
+                tracing::info!(name = %slug, run = run.id, "retomando el clon en curso");
+                tokio::spawn(self.clone().follow_deploy(service, run, true));
+            } else if let Err(error) = self
+                .db
+                .finish_deploy_run(
+                    run.id,
+                    DeployStatus::Failed,
+                    Some("interrumpido: el agente se reinició".to_owned()),
+                )
+                .await
+            {
+                tracing::error!(name = %slug, %error, "no se pudo cerrar el despliegue interrumpido");
+            }
         }
+    }
+
+    /// La unidad está en marcha o arrancando. Ante la duda (systemd no responde), se considera
+    /// activa: es más seguro esperar que lanzar otro despliegue encima.
+    async fn unit_active(&self, unit: &UnitName) -> bool {
+        self.systemctl.status(unit).await.ok().is_none_or(|status| {
+            matches!(
+                status.active_state,
+                ActiveState::Active
+                    | ActiveState::Activating
+                    | ActiveState::Reloading
+                    | ActiveState::Deactivating
+            )
+        })
     }
 
     /// Al arrancar el agente (p. ej. tras reiniciar el servidor): pone en marcha los servicios que
@@ -640,7 +787,7 @@ impl ServiceManager {
             match self.registered(&slug).await {
                 Ok(service)
                     if self.deployed(&service).await.unwrap_or(false)
-                        && self.runnable(&service).await => {}
+                        && self.runnable(&service).await.unwrap_or(false) => {}
                 _ => continue,
             }
             match self.systemctl.run(Action::Start, &slug.unit()).await {
@@ -684,16 +831,7 @@ impl ServiceManager {
         let stored = self.db.deployment(service.id).await?;
         let (definition, updated_at) = match stored {
             Some((definition, updated_at)) => (definition, Some(updated_at)),
-            None => (
-                UpdateDeployment {
-                    repository: None,
-                    access: RepositoryAccess::default(),
-                    setup_commands: Vec::new(),
-                    start_command: String::new(),
-                    publish_dir: None,
-                },
-                None,
-            ),
+            None => (UpdateDeployment::default(), None),
         };
         Ok(self.deployment_report(slug, definition, updated_at))
     }
@@ -706,6 +844,7 @@ impl ServiceManager {
     ) -> Result<ServiceDeployment, ServiceError> {
         let service = self.registered(slug).await?;
         let definition = deployment::normalize(update)?;
+        let _guard = self.deployment_lock.lock().await;
         // El repositorio no cambia una vez elegido (sus versiones, llave y datos dependen de él);
         // la rama, sí.
         if let Some((stored, _)) = self.db.deployment(service.id).await?
@@ -741,6 +880,7 @@ impl ServiceManager {
             setup_commands: definition.setup_commands,
             start_command: definition.start_command,
             publish_dir: definition.publish_dir,
+            auto_deploy: definition.auto_deploy,
             updated_at,
         }
     }
@@ -769,10 +909,24 @@ impl ServiceManager {
         let service = self.registered(slug).await?;
         let host = host_capacity();
         let limits = limits::validate(limits, host)?;
-        self.systemctl
-            .set_properties(&service.slug.unit(), &limits::properties(&limits))
-            .await?;
+        // Primero el registro: así nunca queda en systemd un límite que el agente no conoce (y
+        // que la baja no quitaría). Si systemd lo rechaza, se vuelve a lo anterior.
+        let previous = self.db.limits(service.id).await?;
         let updated_at = self.db.set_limits(service.id, limits).await?;
+        if let Err(error) = self
+            .systemctl
+            .set_properties(&service.slug.unit(), &limits::properties(&limits))
+            .await
+        {
+            let restored = match previous {
+                Some((previous, _)) => self.db.set_limits(service.id, previous).await.map(drop),
+                None => self.db.delete_limits(service.id).await,
+            };
+            if let Err(restore) = restored {
+                tracing::error!(name = %slug, error = %restore, "no se pudieron restaurar los límites guardados");
+            }
+            return Err(error.into());
+        }
         Ok(ServiceLimits {
             limits,
             host,
@@ -803,32 +957,44 @@ impl ServiceManager {
         }
     }
 
-    /// Quita el servicio del registro y borra su archivo de variables (son secretos: no deben
-    /// quedarse en el servidor). No para ni modifica la unidad de systemd.
+    /// Quita el servicio del registro, lo para y borra sus variables y la especificación de sus
+    /// despliegues (son secretos: no deben quedarse en el servidor). No se puede durante un
+    /// despliegue: su unidad seguiría escribiendo en un servicio que ya no existe.
     pub async fn unregister(&self, slug: &ServiceSlug) -> Result<(), ServiceError> {
         let service = self.registered(slug).await?;
+        let deploying = self
+            .db
+            .deploy_runs(service.id, 1)
+            .await?
+            .first()
+            .is_some_and(|run| run.status == DeployStatus::Running);
+        if deploying {
+            return Err(ServiceError::DeployInProgress);
+        }
+        let had_limits = self.db.limits(service.id).await?.is_some();
+        // Primero el registro: si algo de lo siguiente falla, el servicio ya no existe para el
+        // cliente y lo que quede son restos, no un servicio a medias.
+        if !self.db.delete_service_by_slug(slug.clone()).await? {
+            return Err(ServiceError::NotRegistered(slug.clone()));
+        }
+        let unit = service.slug.unit();
+        // Un servicio que nadie ve no debe seguir en marcha. Sin bloquear la baja.
+        if let Err(error) = self.systemctl.run(Action::Stop, &unit).await {
+            tracing::warn!(name = %slug, %error, "no se pudo parar el servicio dado de baja");
+        }
         // Los límites viven en systemd (drop-ins), no en el registro: se quitan para que un
-        // servicio que se registre luego con el mismo nombre no los herede. Sin bloquear el borrado.
-        if self.db.limits(service.id).await?.is_some()
+        // servicio que se registre luego con el mismo nombre no los herede.
+        if had_limits
             && let Err(error) = self
                 .systemctl
-                .set_properties(
-                    &service.slug.unit(),
-                    &limits::properties(&ResourceLimits::default()),
-                )
+                .set_properties(&unit, &limits::properties(&ResourceLimits::default()))
                 .await
         {
             tracing::warn!(name = %slug, %error, "no se pudieron quitar los límites de la unidad");
         }
         self.env.remove(slug).await?;
-        // Especificación y copia del token del despliegue.
         let dir = self.paths.deployment_dir(slug);
-        tokio::task::spawn_blocking(move || files::remove(&dir))
-            .await
-            .map_err(DbError::from)??;
-        if !self.db.delete_service_by_slug(slug.clone()).await? {
-            return Err(ServiceError::NotRegistered(slug.clone()));
-        }
+        blocking(move || files::remove(&dir)).await?;
         tracing::info!(name = %slug, "servicio quitado del registro");
         Ok(())
     }
@@ -885,18 +1051,6 @@ impl ServiceManager {
         })
     }
 
-    pub async fn start(&self, slug: &ServiceSlug) -> Result<ServiceActionReport, ServiceError> {
-        self.run(Action::Start, slug).await
-    }
-
-    pub async fn stop(&self, slug: &ServiceSlug) -> Result<ServiceActionReport, ServiceError> {
-        self.run(Action::Stop, slug).await
-    }
-
-    pub async fn restart(&self, slug: &ServiceSlug) -> Result<ServiceActionReport, ServiceError> {
-        self.run(Action::Restart, slug).await
-    }
-
     pub async fn run(
         &self,
         action: Action,
@@ -909,17 +1063,13 @@ impl ServiceManager {
         if action != Action::Stop && !self.deployed(&service).await? {
             return Err(ServiceError::NotDeployed);
         }
-        if action != Action::Stop && !self.runnable(&service).await {
+        if action != Action::Stop && !self.runnable(&service).await? {
             return Err(ServiceError::NothingToRun);
         }
-        let outcome = match self.systemctl.run(action, &unit).await? {
-            Outcome::Started => ServiceOutcome::Started,
-            Outcome::Stopped => ServiceOutcome::Stopped,
-            Outcome::Restarted => ServiceOutcome::Restarted,
-        };
+        let outcome = self.systemctl.run(action, &unit).await?;
         // Lo que el usuario pidió por última vez es lo que se restablece al reiniciar el servidor.
         self.db
-            .set_autostart(slug.clone(), action != Action::Stop)
+            .set_autostart(service.id, action != Action::Stop)
             .await?;
         Ok(ServiceActionReport {
             name: slug.to_string(),
@@ -928,40 +1078,28 @@ impl ServiceManager {
         })
     }
 
-    /// PID del proceso principal, o `None` si el servicio no tiene uno (ver
-    /// [`Systemctl::main_pid`]).
-    pub async fn main_pid(&self, slug: &ServiceSlug) -> Result<Option<Pid>, ServiceError> {
-        let unit = self.registered(slug).await?.slug.unit();
-        Ok(self.systemctl.main_pid(&unit).await?)
-    }
-
-    /// Estado de systemd y, si hay proceso principal, su consumo.
+    /// Estado de systemd y el consumo del servicio entero (su cgroup).
     pub async fn status(&self, slug: &ServiceSlug) -> Result<ServiceStatusReport, ServiceError> {
         let service = self.registered(slug).await?;
         let unit = service.slug.unit();
         let status = self.systemctl.status(&unit).await?;
+        let read_at = std::time::Instant::now();
         let releases = self.db.releases(service.id).await?;
         let running = matches!(
             status.active_state,
             ActiveState::Active | ActiveState::Reloading | ActiveState::Deactivating
         );
-        // Las dos mediciones pueden esperar una segunda lectura: en paralelo, no una tras otra.
-        let (metrics, resources) = tokio::join!(
-            async {
-                match status.main_pid {
-                    Some(pid) => self.sampler.sample(pid).await,
-                    None => Ok(None),
-                }
-            },
-            self.cgroup_cpu.resources(
+        let resources = self
+            .cgroup_cpu
+            .resources(
                 &self.systemctl,
                 &unit,
                 status.resources,
+                read_at,
                 status.control_group.as_deref(),
-                running
+                running,
             )
-        );
-        let metrics = metrics?;
+            .await;
         Ok(ServiceStatusReport {
             name: slug.to_string(),
             unit: unit.to_string(),
@@ -971,7 +1109,6 @@ impl ServiceManager {
             pid: status
                 .main_pid
                 .map(|pid| pid.as_raw_nonzero().get().unsigned_abs()),
-            metrics,
             deployed: releases.active.is_some(),
             release: releases.active,
             previous_release: releases.previous,
@@ -981,11 +1118,12 @@ impl ServiceManager {
     }
 
     /// Tiene comando de arranque (un sitio solo estático no tiene proceso que ejecutar).
-    async fn runnable(&self, service: &Service) -> bool {
-        match self.db.deployment(service.id).await {
-            Ok(Some((definition, _))) => !definition.start_command.is_empty(),
-            _ => true,
-        }
+    async fn runnable(&self, service: &Service) -> Result<bool, ServiceError> {
+        Ok(self
+            .db
+            .deployment(service.id)
+            .await?
+            .is_none_or(|(definition, _)| !definition.start_command.is_empty()))
     }
 
     /// Hay versión activa (la registra el agente al terminar cada despliegue: no necesita leer el

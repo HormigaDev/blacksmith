@@ -127,7 +127,8 @@ struct TunnelClosed {
 }
 
 /// Las operaciones del llavero y del disco son bloqueantes: fuera del runtime asíncrono.
-async fn blocking<T: Send + 'static>(
+/// Trabajo de archivos, llavero o cifrado en un hilo aparte, para no bloquear el runtime.
+pub(crate) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> CommandResult<T> + Send + 'static,
 ) -> CommandResult<T> {
     tokio::task::spawn_blocking(work)
@@ -264,42 +265,6 @@ pub async fn server_remove(
     .await
 }
 
-/// Resumen de la llave guardada para este servidor (nunca la llave).
-#[tauri::command]
-pub async fn ssh_key_info(
-    state: State<'_, AppState>,
-    target: TargetInput,
-) -> CommandResult<Option<KeyInfo>> {
-    let target = target.validate()?;
-    let vault = Arc::clone(&state.vault);
-    blocking(move || {
-        Ok(vault.get(&target.id())?.map(|credential| KeyInfo {
-            passphrase_saved: credential.passphrase.is_some(),
-            key: credential.summary,
-        }))
-    })
-    .await
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct KeyInfo {
-    #[serde(flatten)]
-    key: KeySummary,
-    passphrase_saved: bool,
-}
-
-/// Borra la llave guardada para este servidor. La interfaz lo confirma antes.
-#[tauri::command]
-pub async fn ssh_forget_key(
-    state: State<'_, AppState>,
-    target: TargetInput,
-) -> CommandResult<bool> {
-    let target = target.validate()?;
-    let vault = Arc::clone(&state.vault);
-    blocking(move || vault.delete(&target.id())).await
-}
-
 /// Abre el túnel hacia el agente. Si ya está abierto, devuelve el existente.
 #[tauri::command]
 pub async fn tunnel_open(
@@ -307,7 +272,6 @@ pub async fn tunnel_open(
     state: State<'_, AppState>,
     target: TargetInput,
     passphrase: Option<Zeroizing<String>>,
-    local_port: Option<u16>,
 ) -> CommandResult<TunnelInfo> {
     let target = target.validate()?;
     let id = target.id();
@@ -318,16 +282,21 @@ pub async fn tunnel_open(
 
     let vault = Arc::clone(&state.vault);
     let credential_id = id.clone();
-    let credential = blocking(move || vault.get(&credential_id))
-        .await?
-        .ok_or(CommandError::CredentialsMissing)?;
-    let passphrase = passphrase.or(credential.passphrase);
-    let private_key = key::decode(
-        &credential.private_key,
-        passphrase.as_deref().map(String::as_str),
-    )?;
+    // Descifrar una llave con passphrase (bcrypt) tarda hasta un segundo: fuera del runtime.
+    let private_key = blocking(move || {
+        let credential = vault
+            .get(&credential_id)?
+            .ok_or(CommandError::CredentialsMissing)?;
+        let passphrase = passphrase.or(credential.passphrase);
+        key::decode(
+            &credential.private_key,
+            passphrase.as_deref().map(String::as_str),
+        )
+    })
+    .await?;
 
-    let config = TunnelConfig::to_agent(target.clone(), local_port.unwrap_or(0));
+    // Puerto local libre que elige el sistema: la interfaz no decide dónde escucha nada.
+    let config = TunnelConfig::to_agent(target.clone(), 0);
     let tunnel = match Tunnel::open(config, private_key, state.host_keys.clone()).await {
         Ok(tunnel) => tunnel,
         Err(CommandError::HostKeyUnknown {
@@ -355,6 +324,13 @@ pub async fn tunnel_open(
         Err(error) => return Err(error),
     };
 
+    // El servidor pudo quitarse mientras se conectaba: su túnel no debe quedar abierto.
+    let servers = Arc::clone(&state.servers);
+    let lookup = id.clone();
+    if blocking(move || servers.get(&lookup)).await?.is_none() {
+        tunnel.close().await;
+        return Err(CommandError::ServerNotFound);
+    }
     let mut tunnels = state.tunnels.lock().await;
     if let Some(open) = tunnels.get(&id) {
         // Otra llamada abrió el mismo destino mientras conectábamos: se conserva esa.
@@ -425,20 +401,6 @@ pub async fn tunnel_close(
     Ok(true)
 }
 
-#[tauri::command]
-pub async fn tunnel_status(
-    state: State<'_, AppState>,
-    target: TargetInput,
-) -> CommandResult<Option<TunnelInfo>> {
-    let id = target.validate()?.id();
-    Ok(state
-        .tunnels
-        .lock()
-        .await
-        .get(&id)
-        .map(|open| info(&id, &open.tunnel)))
-}
-
 fn info(id: &str, tunnel: &Tunnel) -> TunnelInfo {
     TunnelInfo {
         target_id: id.to_owned(),
@@ -461,9 +423,9 @@ fn watch_for_loss(
     mut lost: tokio::sync::watch::Receiver<bool>,
 ) {
     tauri::async_runtime::spawn(async move {
-        if lost.wait_for(|lost| *lost).await.is_err() {
-            return;
-        }
+        // Si el aviso se cierra sin llegar (la sesión terminó sin pasar por `disconnected`), el
+        // túnel tampoco sirve ya: se retira igual. Uno cerrado a propósito ya no está en el mapa.
+        let _ = lost.wait_for(|lost| *lost).await;
         let state = tauri::Manager::state::<AppState>(&app);
         let removed = {
             let mut tunnels = state.tunnels.lock().await;

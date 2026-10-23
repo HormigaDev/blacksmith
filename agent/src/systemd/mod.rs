@@ -13,9 +13,9 @@ mod journal;
 mod systemctl;
 mod unit;
 
-pub use journal::{JOURNALCTL_PATH, JournalError, Journalctl, LogStream, MAX_LINE_BYTES};
+pub use journal::{JOURNALCTL_PATH, JournalError, Journalctl, LogStream};
 pub use systemctl::{
     Action, DEFAULT_TIMEOUT, Operation, Outcome, SYSTEMCTL_PATH, Scope, Systemctl, SystemctlError,
     UnitResources, UnitStatus,
 };
-pub use unit::{InvalidUnitName, UnitName};
+pub use unit::UnitName;

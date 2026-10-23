@@ -1,5 +1,5 @@
 # Generada por Blacksmith (agent/src/deploy/units.rs): no la edite a mano.
-# Despliegue de %i: clona la rama, ejecuta la preparación y activa la versión.
+# Despliegue de %i: copia el clon, ejecuta la preparación y activa la versión.
 
 [Unit]
 Description=Blacksmith: despliegue de %i
@@ -8,28 +8,30 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=blacksmith
-Group=blacksmith
-StateDirectory=blacksmith/%i
+User=blacksmith-apps
+Group=blacksmith-apps
+StateDirectory=blacksmith-apps/%i
 StateDirectoryMode=0711
 UMask=0077
 CPUAccounting=yes
 MemoryAccounting=yes
 TasksAccounting=yes
-Environment=HOME=%S/blacksmith/%i
+Environment=HOME=%S/blacksmith-apps/%i
 EnvironmentFile=-%E/blacksmith/env/global.env
 EnvironmentFile=-%E/blacksmith/env/services/%i.env
-WorkingDirectory=%S/blacksmith/%i
+WorkingDirectory=%S/blacksmith-apps/%i
+# Solo la especificación, que no lleva secretos.
 LoadCredential=spec:%S/blacksmith/deployments/%i/spec.json
-LoadCredential=github-token:%S/blacksmith/deployments/%i/github-token
-LoadCredential=deploy-key:%S/blacksmith/deployments/%i/deploy-key
+Environment=BLACKSMITH_SOURCE=%S/blacksmith-fetch/%i/source
 ExecStart=/opt/blacksmith/bin/blacksmith-agent run-deploy
 TimeoutStartSec=30min
-# Solo su directorio: los demás servicios, las variables y los datos del agente no existen.
-TemporaryFileSystem=%S/blacksmith:ro
-BindPaths=%S/blacksmith/%i
-InaccessiblePaths=-%E/blacksmith
+TemporaryFileSystem=%S/blacksmith-apps:ro
+BindPaths=%S/blacksmith-apps/%i
+TemporaryFileSystem=%S/blacksmith-fetch:ro
+BindReadOnlyPaths=-%S/blacksmith-fetch/%i
 InaccessiblePaths=-%S/blacksmith
+InaccessiblePaths=-%E/blacksmith
+InaccessiblePaths=-/run/dbus
 ProtectProc=invisible
 NoNewPrivileges=yes
 ProtectSystem=strict

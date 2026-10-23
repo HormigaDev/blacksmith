@@ -14,7 +14,7 @@
 
 use std::{
     fmt, io,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{ExitStatus, Stdio},
     time::Duration,
 };
@@ -70,8 +70,6 @@ pub enum Operation {
     Start,
     Stop,
     Restart,
-    /// `show -p MainPID --value`.
-    ShowMainPid,
     /// `show -p LoadState -p ActiveState -p SubState -p MainPID`.
     ShowStatus,
     /// `show -p EnvironmentFiles`.
@@ -86,7 +84,7 @@ impl Operation {
             Self::Start => "start",
             Self::Stop => "stop",
             Self::Restart => "restart",
-            Self::ShowMainPid | Self::ShowStatus | Self::ShowEnvironmentFiles => "show",
+            Self::ShowStatus | Self::ShowEnvironmentFiles => "show",
             Self::SetProperty => "set-property",
         }
     }
@@ -110,12 +108,7 @@ impl fmt::Display for Operation {
 
 /// Resultado de una acción completada: `systemctl` espera a que systemd termine el trabajo, así
 /// que `Started` significa que el servicio arrancó (o ya estaba activo), no solo que se pidió.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Outcome {
-    Started,
-    Stopped,
-    Restarted,
-}
+pub type Outcome = shared::ServiceOutcome;
 
 /// Gestor de servicios al que se dirigen las acciones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -194,7 +187,8 @@ pub struct UnitStatus {
     pub load_state: LoadState,
     pub active_state: ActiveState,
     pub sub_state: String,
-    /// Como en [`Systemctl::main_pid`]: `None` si no hay proceso principal.
+    /// `None` si no hay proceso principal: detenido, fallido, `Type=oneshot` ya terminado… o una
+    /// unidad que no existe (systemd responde `0` en todos esos casos).
     pub main_pid: Option<Pid>,
     /// Contadores del cgroup de la unidad (todos sus procesos, no solo el principal).
     pub resources: UnitResources,
@@ -230,7 +224,7 @@ pub struct UnitResources {
     pub active_since_us: Option<u64>,
 }
 
-/// Propiedades de [`UnitResources`], en el orden de sus campos.
+/// Propiedades que se piden para [`UnitResources`].
 const RESOURCE_PROPERTIES: [&str; 11] = [
     "MemoryCurrent",
     "MemoryPeak",
@@ -328,18 +322,6 @@ impl Systemctl {
         }
     }
 
-    pub async fn start(&self, unit: &UnitName) -> Result<Outcome, SystemctlError> {
-        self.run(Action::Start, unit).await
-    }
-
-    pub async fn stop(&self, unit: &UnitName) -> Result<Outcome, SystemctlError> {
-        self.run(Action::Stop, unit).await
-    }
-
-    pub async fn restart(&self, unit: &UnitName) -> Result<Outcome, SystemctlError> {
-        self.run(Action::Restart, unit).await
-    }
-
     pub async fn run(&self, action: Action, unit: &UnitName) -> Result<Outcome, SystemctlError> {
         let result = self.run_unlogged(action, unit).await;
         match &result {
@@ -359,7 +341,9 @@ impl Systemctl {
         unit: &UnitName,
     ) -> Result<Outcome, SystemctlError> {
         let operation = Operation::from(action);
-        let execution = self.execute(operation, &[], unit, self.timeout).await?;
+        let execution = self
+            .execute(operation, &[], unit, &[], self.timeout)
+            .await?;
         if execution.status.success() {
             Ok(action.outcome())
         } else {
@@ -372,82 +356,71 @@ impl Systemctl {
         }
     }
 
-    /// PID del proceso principal del servicio (`systemctl show -p MainPID --value`), o `None`
-    /// si no tiene: detenido, fallido, `Type=oneshot` ya terminado… systemd devuelve `0` en
-    /// todos esos casos, y también para una unidad que no existe, así que `None` no distingue
-    /// entre ellos (para un servicio registrado, significa «no hay proceso que medir»).
-    ///
-    /// No requiere polkit: es una lectura.
-    pub async fn main_pid(&self, unit: &UnitName) -> Result<Option<Pid>, SystemctlError> {
-        let operation = Operation::ShowMainPid;
-        let timeout = self.timeout.min(QUERY_TIMEOUT);
-        let execution = self
-            .execute(operation, &["-p", "MainPID", "--value"], unit, timeout)
-            .await?;
-        if !execution.status.success() {
-            return Err(classify(
-                operation,
-                unit,
-                execution.status,
-                &execution.stderr,
-            ));
-        }
-        parse_main_pid(&execution.stdout).ok_or_else(|| SystemctlError::UnexpectedOutput {
-            operation,
-            unit: unit.clone(),
-            output: String::from_utf8_lossy(&execution.stdout).into_owned(),
-        })
-    }
-
-    /// Estado de la unidad en una sola llamada. A diferencia de [`Systemctl::main_pid`],
-    /// distingue una unidad inexistente (`LoadState::NotFound`). No requiere polkit.
+    /// Estado de la unidad en una sola llamada; una unidad inexistente es `LoadState::NotFound`.
+    /// No requiere polkit.
     pub async fn status(&self, unit: &UnitName) -> Result<UnitStatus, SystemctlError> {
-        let operation = Operation::ShowStatus;
-        let timeout = self.timeout.min(QUERY_TIMEOUT);
-        let mut options = vec![
-            "-p",
+        let mut options = Vec::with_capacity(2 * (5 + RESOURCE_PROPERTIES.len()));
+        for property in [
             "LoadState",
-            "-p",
             "ActiveState",
-            "-p",
             "SubState",
-            "-p",
             "MainPID",
-        ];
-        options.extend(["-p", "ControlGroup"]);
-        for property in RESOURCE_PROPERTIES {
+            "ControlGroup",
+        ]
+        .into_iter()
+        .chain(RESOURCE_PROPERTIES)
+        {
             options.extend(["-p", property]);
         }
-        let execution = self.execute(operation, &options, unit, timeout).await?;
-        if !execution.status.success() {
-            return Err(classify(
-                operation,
-                unit,
-                execution.status,
-                &execution.stderr,
-            ));
-        }
-        parse_status(&execution.stdout).ok_or_else(|| SystemctlError::UnexpectedOutput {
-            operation,
-            unit: unit.clone(),
-            output: String::from_utf8_lossy(&execution.stdout).into_owned(),
-        })
+        self.show(Operation::ShowStatus, &options, unit, parse_status)
+            .await
     }
 
     /// CPU consumida por el cgroup de la unidad (`CPUUsageNSec`), para medir el uso entre dos
     /// lecturas. `None` si systemd no la tiene.
     pub async fn cpu_usage_nsec(&self, unit: &UnitName) -> Result<Option<u64>, SystemctlError> {
-        Ok(self.status(unit).await?.resources.cpu_nsec)
+        let options = ["-p", "CPUUsageNSec", "--value"];
+        self.show(Operation::ShowStatus, &options, unit, |stdout| {
+            Some(
+                std::str::from_utf8(stdout)
+                    .ok()
+                    .and_then(|value| parse_counter(value.trim())),
+            )
+        })
+        .await
     }
 
     /// Archivos `EnvironmentFile=` que systemd cargará al arrancar la unidad (de la unidad y de
     /// sus drop-ins, con los especificadores como `%N` ya resueltos). Vacío si no tiene ninguno
     /// o la unidad no existe. No requiere polkit.
     pub async fn environment_files(&self, unit: &UnitName) -> Result<Vec<PathBuf>, SystemctlError> {
-        let operation = Operation::ShowEnvironmentFiles;
-        let timeout = self.timeout.min(QUERY_TIMEOUT);
+        let options = ["-p", "EnvironmentFiles"];
+        self.show(
+            Operation::ShowEnvironmentFiles,
+            &options,
+            unit,
+            parse_environment_files,
+        )
+        .await
+    }
+
+    /// `systemctl show`, con su propio tiempo máximo (una consulta no espera a ningún trabajo).
+    /// `parse` devuelve `None` si no entiende la salida.
+    async fn show<T>(
+        &self,
+        operation: Operation,
+        options: &[&str],
+        unit: &UnitName,
+        parse: impl FnOnce(&[u8]) -> Option<T>,
+    ) -> Result<T, SystemctlError> {
         let execution = self
-            .execute(operation, &["-p", "EnvironmentFiles"], unit, timeout)
+            .execute(
+                operation,
+                options,
+                unit,
+                &[],
+                self.timeout.min(QUERY_TIMEOUT),
+            )
             .await?;
         if !execution.status.success() {
             return Err(classify(
@@ -457,7 +430,7 @@ impl Systemctl {
                 &execution.stderr,
             ));
         }
-        parse_environment_files(&execution.stdout).ok_or_else(|| SystemctlError::UnexpectedOutput {
+        parse(&execution.stdout).ok_or_else(|| SystemctlError::UnexpectedOutput {
             operation,
             unit: unit.clone(),
             output: String::from_utf8_lossy(&execution.stdout).into_owned(),
@@ -474,7 +447,7 @@ impl Systemctl {
         let operation = Operation::SetProperty;
         let after: Vec<&str> = properties.iter().map(String::as_str).collect();
         let execution = self
-            .execute_with(
+            .execute(
                 operation,
                 &[],
                 unit,
@@ -508,19 +481,8 @@ impl Systemctl {
         .await
     }
 
-    async fn execute(
-        &self,
-        operation: Operation,
-        options: &[&str],
-        unit: &UnitName,
-        timeout: Duration,
-    ) -> Result<Execution, SystemctlError> {
-        self.execute_with(operation, options, unit, &[], timeout)
-            .await
-    }
-
     /// `after`: argumentos tras la unidad (las propiedades de `set-property`).
-    async fn execute_with(
+    async fn execute(
         &self,
         operation: Operation,
         options: &[&str],
@@ -532,16 +494,19 @@ impl Systemctl {
             .command(operation, options, unit, after)
             .spawn()
             .map_err(SystemctlError::Io)?;
-        // `async move`: si se agota el tiempo, el futuro se descarta con el hijo dentro y
-        // `kill_on_drop` lo mata.
-        tokio::time::timeout(timeout, async move { collect(&mut child).await })
-            .await
-            .map_err(|_| SystemctlError::Timeout {
-                operation,
-                unit: unit.clone(),
-                after: timeout,
-            })?
-            .map_err(SystemctlError::Io)
+        match tokio::time::timeout(timeout, collect(&mut child)).await {
+            Ok(execution) => execution.map_err(SystemctlError::Io),
+            Err(_) => {
+                // Se mata y se recoge aquí: soltado sin más, quedaría zombi hasta que tokio lo
+                // recogiera en segundo plano.
+                let _ = child.kill().await;
+                Err(SystemctlError::Timeout {
+                    operation,
+                    unit: unit.clone(),
+                    after: timeout,
+                })
+            }
+        }
     }
 
     fn command(
@@ -551,19 +516,8 @@ impl Systemctl {
         unit: &UnitName,
         after: &[&str],
     ) -> tokio::process::Command {
-        let mut command = std::process::Command::new(&self.program);
-        command
-            .env_clear()
-            .env("LC_ALL", "C")
-            .env("SYSTEMD_COLORS", "0");
+        let mut command = base_command(&self.program, self.scope);
         if self.scope == Scope::User {
-            // El gestor de usuario se alcanza por el bus de sesión: son las únicas variables
-            // que se heredan, y solo en este modo.
-            for key in ["XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"] {
-                if let Some(value) = std::env::var_os(key) {
-                    command.env(key, value);
-                }
-            }
             command.arg("--user");
         }
         command
@@ -580,6 +534,24 @@ impl Systemctl {
         command.kill_on_drop(true);
         command
     }
+}
+
+/// `systemctl` o `journalctl` sin el entorno del agente: solo un idioma fijo (los mensajes se
+/// clasifican por su texto) y, con el gestor de usuario, las variables de su bus de sesión.
+pub(super) fn base_command(program: &Path, scope: Scope) -> std::process::Command {
+    let mut command = std::process::Command::new(program);
+    command
+        .env_clear()
+        .env("LC_ALL", "C")
+        .env("SYSTEMD_COLORS", "0");
+    if scope == Scope::User {
+        for key in ["XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"] {
+            if let Some(value) = std::env::var_os(key) {
+                command.env(key, value);
+            }
+        }
+    }
+    command
 }
 
 /// Lee ambas salidas a la vez (si se leyeran por turnos, el hijo podría bloquearse escribiendo
@@ -607,9 +579,8 @@ async fn read_limited(pipe: Option<impl AsyncRead + Unpin>) -> io::Result<Vec<u8
     Ok(captured)
 }
 
-/// Salida de `show -p MainPID --value`: un entero decimal y un salto de línea. `0` o vacío
-/// significan que no hay proceso principal. Cualquier otra cosa es `None` del `Option` externo
-/// (salida inesperada).
+/// Valor de `MainPID`: un entero decimal. `0` o vacío significan que no hay proceso principal.
+/// Cualquier otra cosa es `None` del `Option` externo (salida inesperada).
 fn parse_main_pid(stdout: &[u8]) -> Option<Option<Pid>> {
     let value = stdout.strip_suffix(b"\n").unwrap_or(stdout);
     if value.is_empty() {
@@ -627,50 +598,45 @@ fn parse_main_pid(stdout: &[u8]) -> Option<Option<Pid>> {
 /// interno de systemd (no en el de los argumentos). Cada clave pedida debe aparecer una vez.
 fn parse_status(stdout: &[u8]) -> Option<UnitStatus> {
     let text = std::str::from_utf8(stdout).ok()?;
-    let (mut load, mut active, mut sub, mut pid, mut group) = (None, None, None, None, None);
-    let mut counters: [Option<&str>; RESOURCE_PROPERTIES.len()] = [None; RESOURCE_PROPERTIES.len()];
+    const STATE: [&str; 5] = [
+        "LoadState",
+        "ActiveState",
+        "SubState",
+        "MainPID",
+        "ControlGroup",
+    ];
+    let mut fields = std::collections::HashMap::new();
     for line in text.lines() {
         let (key, value) = line.split_once('=')?;
-        let slot = match key {
-            "LoadState" => &mut load,
-            "ActiveState" => &mut active,
-            "SubState" => &mut sub,
-            "MainPID" => &mut pid,
-            "ControlGroup" => &mut group,
-            // Opcionales: un systemd antiguo puede no tener alguna.
-            _ => {
-                let index = RESOURCE_PROPERTIES.iter().position(|name| *name == key)?;
-                counters.get_mut(index)?
-            }
-        };
-        if slot.replace(value).is_some() {
+        // Solo lo pedido, y cada clave una vez: otra cosa es una salida que no se entiende.
+        let known = STATE.contains(&key) || RESOURCE_PROPERTIES.contains(&key);
+        if !known || fields.insert(key, value).is_some() {
             return None;
         }
     }
-    let counter = |index: usize| {
-        counters
-            .get(index)
-            .copied()
-            .flatten()
-            .and_then(parse_counter)
-    };
+    let field = |name: &str| fields.get(name).copied();
+    // Los contadores son opcionales: un systemd antiguo puede no tener alguno.
+    let counter = |name: &str| field(name).and_then(parse_counter);
     let resources = UnitResources {
-        memory: counter(0),
-        memory_peak: counter(1),
-        memory_max: counter(2),
-        swap: counter(3),
-        cpu_nsec: counter(4),
-        tasks: counter(5),
-        restarts: counter(6),
-        active_since_us: counter(7).filter(|value| *value > 0),
-        cpu_quota_us: counters
-            .get(8)
-            .copied()
-            .flatten()
-            .and_then(parse_timespan_us),
-        swap_max: counter(9),
-        tasks_max: counter(10),
+        memory: counter("MemoryCurrent"),
+        memory_peak: counter("MemoryPeak"),
+        memory_max: counter("MemoryMax"),
+        swap: counter("MemorySwapCurrent"),
+        cpu_nsec: counter("CPUUsageNSec"),
+        tasks: counter("TasksCurrent"),
+        restarts: counter("NRestarts"),
+        active_since_us: counter("ActiveEnterTimestampMonotonic").filter(|value| *value > 0),
+        cpu_quota_us: field("CPUQuotaPerSecUSec").and_then(parse_timespan_us),
+        swap_max: counter("MemorySwapMax"),
+        tasks_max: counter("TasksMax"),
     };
+    let (load, active, sub, pid, group) = (
+        field("LoadState"),
+        field("ActiveState"),
+        field("SubState"),
+        field("MainPID"),
+        field("ControlGroup"),
+    );
     let sub_state = sub?;
     if sub_state.is_empty()
         || !sub_state
@@ -680,8 +646,8 @@ fn parse_status(stdout: &[u8]) -> Option<UnitStatus> {
         return None;
     }
     Some(UnitStatus {
-        load_state: parse_load_state(load?)?,
-        active_state: parse_active_state(active?)?,
+        load_state: parse_state(load?)?,
+        active_state: parse_state(active?)?,
         sub_state: sub_state.to_owned(),
         main_pid: parse_main_pid(pid?.as_bytes())?,
         resources,
@@ -706,31 +672,10 @@ fn parse_environment_files(stdout: &[u8]) -> Option<Vec<PathBuf>> {
         .collect()
 }
 
-fn parse_load_state(raw: &str) -> Option<LoadState> {
-    Some(match raw {
-        "loaded" => LoadState::Loaded,
-        "not-found" => LoadState::NotFound,
-        "bad-setting" => LoadState::BadSetting,
-        "error" => LoadState::Error,
-        "masked" => LoadState::Masked,
-        "merged" => LoadState::Merged,
-        "stub" => LoadState::Stub,
-        _ => return None,
-    })
-}
-
-fn parse_active_state(raw: &str) -> Option<ActiveState> {
-    Some(match raw {
-        "active" => ActiveState::Active,
-        "reloading" => ActiveState::Reloading,
-        "inactive" => ActiveState::Inactive,
-        "failed" => ActiveState::Failed,
-        "activating" => ActiveState::Activating,
-        "deactivating" => ActiveState::Deactivating,
-        "maintenance" => ActiveState::Maintenance,
-        "refreshing" => ActiveState::Refreshing,
-        _ => return None,
-    })
+/// Estados de systemd (`loaded`, `not-found`, `active`…): los mismos nombres que en el contrato
+/// (`shared`, en kebab-case).
+fn parse_state<T: serde::de::DeserializeOwned>(raw: &str) -> Option<T> {
+    T::deserialize(serde::de::value::StrDeserializer::<serde::de::value::Error>::new(raw)).ok()
 }
 
 /// Clasifica un fallo por la salida de error (`LC_ALL=C`) y el código de salida.
@@ -1122,8 +1067,8 @@ mod tests {
         );
 
         let command = Systemctl::default().command(
-            Operation::ShowMainPid,
-            &["-p", "MainPID", "--value"],
+            Operation::ShowStatus,
+            &["-p", "CPUUsageNSec", "--value"],
             &unit(),
             &[],
         );
@@ -1135,7 +1080,7 @@ mod tests {
                 "--no-pager",
                 "show",
                 "-p",
-                "MainPID",
+                "CPUUsageNSec",
                 "--value",
                 "--",
                 "api.service"

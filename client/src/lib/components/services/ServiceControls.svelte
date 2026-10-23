@@ -11,7 +11,7 @@
     import RotateCwIcon from '@lucide/svelte/icons/rotate-cw';
     import SquareIcon from '@lucide/svelte/icons/square';
 
-    import type { ServiceAction, ServiceStatus } from '$lib/agent';
+    import { isRunning, type ServiceAction, type ServiceStatus } from '$lib/agent';
     import { formatBytes, formatPercent, t } from '$lib/i18n';
 
     import Badge from '../ui/Badge.svelte';
@@ -35,9 +35,7 @@
     let confirm = $state<'stop' | 'restart' | null>(null);
 
     const deployed = $derived(status?.loadState === 'loaded' && status.deployed);
-    const running = $derived(
-        status !== null && ['active', 'reloading', 'activating', 'refreshing'].includes(status.activeState),
-    );
+    const running = $derived(status !== null && isRunning(status.activeState));
     const badge = $derived.by(() => {
         if (!status) return { variant: 'neutral', label: t('services.controls.unknown') } as const;
         const variant = (

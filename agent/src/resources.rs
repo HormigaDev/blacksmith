@@ -32,12 +32,13 @@ pub struct CgroupCpu {
 }
 
 impl CgroupCpu {
-    /// Consumo actual del cgroup de `unit`, con `resources` recién leídos de systemd.
+    /// Consumo actual del cgroup de `unit`, con `resources` leídos de systemd en `read_at`.
     pub async fn resources(
         &self,
         systemctl: &Systemctl,
         unit: &UnitName,
         resources: UnitResources,
+        read_at: Instant,
         control_group: Option<&str>,
         running: bool,
     ) -> ServiceResources {
@@ -49,7 +50,7 @@ impl CgroupCpu {
             _ => None,
         };
         let cpu_percent = match (running, resources.cpu_nsec) {
-            (true, Some(nsec)) => self.cpu_percent(systemctl, unit, nsec).await,
+            (true, Some(nsec)) => self.cpu_percent(systemctl, unit, read_at, nsec).await,
             _ => None,
         };
         ServiceResources {
@@ -74,17 +75,23 @@ impl CgroupCpu {
         }
     }
 
-    async fn cpu_percent(&self, systemctl: &Systemctl, unit: &UnitName, nsec: u64) -> Option<f64> {
-        let now = Instant::now();
-        let previous = self.record(unit, now, nsec);
-        if let Some(percent) = previous.and_then(|(at, before)| percent(at, before, now, nsec)) {
+    async fn cpu_percent(
+        &self,
+        systemctl: &Systemctl,
+        unit: &UnitName,
+        read_at: Instant,
+        nsec: u64,
+    ) -> Option<f64> {
+        let previous = self.record(unit, read_at, nsec);
+        if let Some(percent) = previous.and_then(|(at, before)| percent(at, before, read_at, nsec))
+        {
             return Some(percent);
         }
         tokio::time::sleep(SECOND_READING).await;
         let later = systemctl.cpu_usage_nsec(unit).await.ok().flatten()?;
         let at = Instant::now();
         self.record(unit, at, later);
-        percent(now, nsec, at, later)
+        percent(read_at, nsec, at, later)
     }
 
     /// Guarda la lectura y devuelve la anterior.

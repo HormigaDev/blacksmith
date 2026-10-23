@@ -346,13 +346,7 @@ fn read_file(path: &Path) -> Result<Vec<EnvVariable>, EnvFileError> {
 
 fn write_file(dir: &Path, path: &Path, content: &str) -> Result<(), EnvFileError> {
     ensure_private_dir(dir)?;
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("env");
-    let temporary = dir.join(format!(".{name}.{}.tmp", std::process::id()));
-    // Por si quedó uno de un fallo anterior de este mismo proceso.
-    let _ = fs::remove_file(&temporary);
+    let temporary = crate::deploy::files::temporary_path(path);
 
     let result = (|| {
         let mut file = fs::OpenOptions::new()

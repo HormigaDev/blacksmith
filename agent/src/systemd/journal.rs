@@ -1,4 +1,4 @@
-//! Lectura continua del journal de una unidad con `journalctl`.
+//! Lectura continua del journal de una o varias unidades con `journalctl`.
 //!
 //! `journalctl --unit=<unidad> --lines=100 --follow --output=json` en un subproceso de tokio;
 //! su stdout se lee línea a línea y cada una se convierte en un [`LogEntry`].
@@ -21,7 +21,7 @@
 //! recupera antes de limitar la unidad. Aun así, el número de flujos simultáneos se limita
 //! (`BLACKSMITH_MAX_LOG_STREAMS`): cuentan para el `MemoryMax=` de la unidad del agente.
 
-use std::{io, path::PathBuf, process::Stdio};
+use std::{io, path::PathBuf, process::Stdio, time::Duration};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -32,7 +32,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-use super::{Scope, UnitName};
+use super::{Scope, UnitName, systemctl::base_command};
 
 /// Ruta de `journalctl` en Debian/Ubuntu (con `/usr` fusionado) y derivadas de RHEL.
 pub const JOURNALCTL_PATH: &str = "/usr/bin/journalctl";
@@ -41,6 +41,8 @@ pub const JOURNALCTL_PATH: &str = "/usr/bin/journalctl";
 pub const MAX_LINE_BYTES: usize = 256 * 1024;
 /// Tras una línea grande, el búfer vuelve a este tamaño para no retener la memoria.
 const LINE_BUFFER: usize = 8 * 1024;
+/// Leer el final del journal no espera a nada: si tarda más, algo va mal.
+const TAIL_TIMEOUT: Duration = Duration::from_secs(5);
 const STDERR_LIMIT: u64 = 4 * 1024;
 
 /// Solo los campos que se usan: `journalctl` no serializa el resto.
@@ -82,44 +84,70 @@ impl Journalctl {
         }
     }
 
-    /// Las últimas `lines` entradas de la unidad y, después, las nuevas según llegan.
-    pub fn follow(&self, unit: &UnitName, lines: u16) -> Result<LogStream, JournalError> {
-        self.spawn(unit, lines, None)
+    fn unit_flag(&self) -> &'static str {
+        match self.scope {
+            Scope::System => "--unit",
+            Scope::User => "--user-unit",
+        }
+    }
+
+    /// Las últimas líneas de la unidad desde `since` (segundos Unix), sin vacías: el motivo de
+    /// un fallo. Vacío si no se pudo leer.
+    pub async fn tail(&self, unit: &UnitName, since: i64) -> String {
+        const READ: u16 = 40;
+        const KEEP: usize = 12;
+        const MAX_CHARS: usize = 2000;
+        let mut command = tokio::process::Command::from(base_command(&self.program, self.scope));
+        command
+            .args(["--no-pager", "--quiet", "--output=cat"])
+            .arg(format!("--lines={READ}"))
+            .arg(format!("--since=@{since}"))
+            .arg(format!("{}={unit}", self.unit_flag()))
+            .stdin(Stdio::null())
+            .kill_on_drop(true);
+        let Ok(Ok(output)) = tokio::time::timeout(TAIL_TIMEOUT, command.output()).await else {
+            return String::new();
+        };
+        let text = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = text
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
+        lines
+            .get(lines.len().saturating_sub(KEEP)..)
+            .unwrap_or_default()
+            .join("\n")
+            .chars()
+            .take(MAX_CHARS)
+            .collect()
+    }
+
+    /// Las últimas `lines` entradas de las unidades (mezcladas por fecha) y, después, las nuevas
+    /// según llegan.
+    pub fn follow(&self, units: &[UnitName], lines: u16) -> Result<LogStream, JournalError> {
+        self.spawn(units, lines, None)
     }
 
     /// Como [`Journalctl::follow`], pero solo desde `since` (segundos Unix): p. ej. la salida
     /// del último despliegue, sin la de los anteriores.
     pub fn follow_since(
         &self,
-        unit: &UnitName,
+        units: &[UnitName],
         since: u64,
         lines: u16,
     ) -> Result<LogStream, JournalError> {
-        self.spawn(unit, lines, Some(since))
+        self.spawn(units, lines, Some(since))
     }
 
     fn spawn(
         &self,
-        unit: &UnitName,
+        units: &[UnitName],
         lines: u16,
         since: Option<u64>,
     ) -> Result<LogStream, JournalError> {
-        let mut command = std::process::Command::new(&self.program);
-        command
-            .env_clear()
-            .env("LC_ALL", "C")
-            .env("SYSTEMD_COLORS", "0");
-        let unit_arg = match self.scope {
-            Scope::System => format!("--unit={unit}"),
-            Scope::User => {
-                for key in ["XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"] {
-                    if let Some(value) = std::env::var_os(key) {
-                        command.env(key, value);
-                    }
-                }
-                format!("--user-unit={unit}")
-            }
-        };
+        let mut command = base_command(&self.program, self.scope);
+        let unit_flag = self.unit_flag();
         command
             .args([
                 "--no-pager",
@@ -134,7 +162,7 @@ impl Journalctl {
             ])
             .arg(format!("--lines={lines}"))
             .args(since.map(|since| format!("--since=@{since}")))
-            .arg(unit_arg)
+            .args(units.iter().map(|unit| format!("{unit_flag}={unit}")))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -156,7 +184,7 @@ impl Journalctl {
                 captured
             })
         });
-        tracing::debug!(%unit, pid = child.id(), "journalctl iniciado");
+        tracing::debug!(?units, pid = child.id(), "journalctl iniciado");
         Ok(LogStream {
             child: Some(child),
             stdout: BufReader::with_capacity(LINE_BUFFER, stdout),

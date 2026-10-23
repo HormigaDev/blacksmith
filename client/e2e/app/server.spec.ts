@@ -57,7 +57,6 @@ test.describe('Servicios del servidor', () => {
         activeState: 'inactive',
         subState: 'dead',
         pid: null,
-        metrics: null,
         deployed: false,
         release: null,
         previousRelease: null,
@@ -84,6 +83,7 @@ test.describe('Servicios del servidor', () => {
         setupCommands: ['npm ci'],
         startCommand: 'npm start',
         publishDir: null,
+        autoDeploy: true,
         updatedAt: 1792680000,
     };
     const ENV = {

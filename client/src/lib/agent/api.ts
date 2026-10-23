@@ -56,11 +56,17 @@ export function registerService(client: HttpClient, service: RegisterService): P
 }
 
 /** Quita el servicio del registro y borra sus variables de entorno. No toca systemd. */
+/** Para el servicio antes de quitarlo: puede tardar lo que systemd tarde en pararlo. */
 export async function unregisterService(client: HttpClient, name: string): Promise<void> {
-    await client.delete(`services/${encodeURIComponent(name)}`);
+    await client.delete(`services/${encodeURIComponent(name)}`, { timeoutMs: SYSTEMD_TIMEOUT_MS });
 }
 
 const servicePath = (name: string, rest = '') => `services/${encodeURIComponent(name)}${rest}`;
+
+/** Lo que espera el agente a un trabajo de systemd (iniciar, parar, reiniciar). */
+const SYSTEMD_TIMEOUT_MS = 120_000;
+/** Aplicar un sitio valida y recarga nginx (`blacksmith-nginx.service`, hasta 60 s). */
+const NGINX_TIMEOUT_MS = 60_000;
 
 export function serviceStatus(client: HttpClient, name: string, signal?: AbortSignal): Promise<ServiceStatus> {
     return client.get(servicePath(name, '/status'), { parse: parseServiceStatus, signal });
@@ -69,7 +75,7 @@ export function serviceStatus(client: HttpClient, name: string, signal?: AbortSi
 /** Arranca, para o reinicia la unidad. Resuelve cuando systemd terminó el trabajo. */
 export async function serviceAction(client: HttpClient, name: string, action: ServiceAction): Promise<void> {
     // Las acciones pueden tardar (el agente espera a systemd): más margen que el habitual.
-    await client.post(servicePath(name, `/${action}`), { timeoutMs: 120_000 });
+    await client.post(servicePath(name, `/${action}`), { timeoutMs: SYSTEMD_TIMEOUT_MS });
 }
 
 export function serviceEnvironment(client: HttpClient, name: string): Promise<ServiceEnvironment> {
@@ -138,18 +144,25 @@ export function serviceSite(client: HttpClient, name: string): Promise<Site | nu
 
 /** Guarda el sitio y lo aplica en nginx (si nginx lo rechaza, sigue el anterior). */
 export async function saveServiceSite(client: HttpClient, name: string, config: SiteConfig): Promise<Site> {
-    const site = await client.put(servicePath(name, '/site'), { body: config, parse: parseSite });
+    const site = await client.put(servicePath(name, '/site'), {
+        body: config,
+        parse: parseSite,
+        timeoutMs: NGINX_TIMEOUT_MS,
+    });
     if (!site) throw new TypeError('respuesta del agente inesperada: sitio vacío');
     return site;
 }
 
 export async function removeServiceSite(client: HttpClient, name: string): Promise<void> {
-    await client.delete(servicePath(name, '/site'));
+    await client.delete(servicePath(name, '/site'), { timeoutMs: NGINX_TIMEOUT_MS });
 }
 
 /** Vuelve a pedir el certificado de Let's Encrypt. */
 export async function retryCertificate(client: HttpClient, name: string): Promise<Site> {
-    const site = await client.post(servicePath(name, '/site/certificate'), { parse: parseSite });
+    const site = await client.post(servicePath(name, '/site/certificate'), {
+        parse: parseSite,
+        timeoutMs: NGINX_TIMEOUT_MS,
+    });
     if (!site) throw new TypeError('respuesta del agente inesperada: sitio vacío');
     return site;
 }

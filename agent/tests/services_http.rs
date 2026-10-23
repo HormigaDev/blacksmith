@@ -60,6 +60,12 @@ if [ "$3" = show ] && [ "$5" = EnvironmentFiles ]; then
     fi
     exit 0
 fi
+# Segunda lectura de CPU: solo el valor, el doble que la anterior.
+if [ "$3" = show ] && [ "$5" = CPUUsageNSec ] && [ "$unit" = blacksmith@api.service ]; then
+    cpu=$(cat "__DIR__/cpu" 2>/dev/null || echo 1000000000)
+    echo "$cpu"; echo $((cpu * 2)) > "__DIR__/cpu"
+    exit 0
+fi
 case "$3:$unit" in
     show:blacksmith@api.service)
         echo "MainPID=$PPID"; echo "LoadState=loaded"; echo "ActiveState=active"; echo "SubState=running"
@@ -149,7 +155,16 @@ fn invocations() -> String {
 }
 
 async fn app() -> Router {
-    let config = Config::from_vars([("BLACKSMITH_ENV", "production")]).unwrap();
+    app_with(&[]).await
+}
+
+async fn app_with(vars: &[(&str, &str)]) -> Router {
+    let config = Config::from_vars(
+        [("BLACKSMITH_ENV", "production")]
+            .into_iter()
+            .chain(vars.iter().copied()),
+    )
+    .unwrap();
     let db = Database::open_in_memory().unwrap();
     for slug in DEPLOYED.into_iter().chain(["sin-version"]) {
         let service = db
@@ -236,9 +251,6 @@ async fn estado_con_pid_y_metricas() {
     assert_eq!(report.sub_state, "running");
     assert_eq!(report.pid, Some(std::process::id()));
     assert!(report.deployed);
-    let metrics = report.metrics.expect("métricas del proceso");
-    assert!(metrics.rss_bytes > 0);
-    assert!(metrics.cpu_percent >= 0.0);
     // Consumo del cgroup entero, según systemd.
     let resources = report.resources;
     assert_eq!(resources.memory_bytes, Some(52_428_800));
@@ -255,7 +267,6 @@ async fn estado_de_un_servicio_parado_o_sin_unidad() {
     let report: ServiceStatusReport = ok(Method::GET, "/api/v1/services/parado/status").await;
     assert_eq!(report.active_state, ActiveState::Inactive);
     assert_eq!(report.pid, None);
-    assert_eq!(report.metrics, None);
 
     let report: ServiceStatusReport = ok(Method::GET, "/api/v1/services/sin-unidad/status").await;
     assert_eq!(report.load_state, LoadState::NotFound);
@@ -463,11 +474,12 @@ async fn sitio_de_nginx() {
     }
     assert_eq!(tls, shared::TlsStatus::Active);
     assert!(invocations().contains("start blacksmith-certbot@api.example.com.service"));
-    let certbot_args =
+    // Solo datos: los argumentos los construye certbot.sh, como root.
+    let certbot_env =
         fs::read_to_string(fake().paths.nginx_certs_dir.join("api.example.com.env")).unwrap();
     assert_eq!(
-        certbot_args,
-        "BLACKSMITH_CERTBOT_ARGS=-d api.example.com -d www.api.example.com --email ops@example.com\n"
+        certbot_env,
+        "BLACKSMITH_DOMAINS=api.example.com,www.api.example.com\nBLACKSMITH_EMAIL=ops@example.com\n"
     );
     let written = fs::read_to_string(&site_file).unwrap();
     assert!(
@@ -876,12 +888,14 @@ async fn registro_listado_y_baja() {
     )
     .await;
     assert_eq!(missing.code, ErrorCode::ServiceNotFound);
-    // Registrar no toca systemd.
-    assert!(
-        !invocations().contains("blacksmith@nuevo"),
+    // Registrar no toca systemd; dar de baja para el servicio (una sola vez).
+    assert_eq!(
+        invocations().matches("blacksmith@nuevo").count(),
+        1,
         "{}",
         invocations()
     );
+    assert!(invocations().contains("stop blacksmith@nuevo.service"));
 }
 
 #[tokio::test]
@@ -1113,11 +1127,21 @@ impl Drop for LocalDeployment {
                 .args(args)
                 .output();
         };
-        let unit = self.slug.unit();
-        let deploy = self.slug.deploy_unit();
-        systemctl(&["stop", unit.as_str(), deploy.as_str()]);
-        systemctl(&["reset-failed", unit.as_str(), deploy.as_str()]);
+        let units = [
+            self.slug.unit(),
+            self.slug.fetch_unit(),
+            self.slug.deploy_unit(),
+        ];
+        let names: Vec<&str> = units.iter().map(|unit| unit.as_str()).collect();
+        systemctl(&[&["stop"], names.as_slice()].concat());
+        systemctl(&[&["reset-failed"], names.as_slice()].concat());
         let _ = fs::remove_dir_all(self.paths.app_dir(&self.slug));
+        let _ = fs::remove_dir_all(
+            self.paths
+                .apps_dir
+                .with_file_name("blacksmith-fetch")
+                .join(self.slug.as_str()),
+        );
         let _ = fs::remove_dir_all(self.paths.deployment_dir(&self.slug));
         let _ = fs::remove_file(
             self.paths
@@ -1217,6 +1241,7 @@ async fn modo_local_de_punta_a_punta() {
                 setup_commands: vec!["echo construido > build.txt".into()],
                 start_command: "sh app.sh".into(),
                 publish_dir: None,
+                auto_deploy: true,
             },
         )
         .await
@@ -1304,7 +1329,10 @@ async fn modo_local_de_punta_a_punta() {
         .await
         .unwrap();
     fs::remove_file(&seen).unwrap();
-    manager.restart(&slug).await.unwrap();
+    manager
+        .run(agent::systemd::Action::Restart, &slug)
+        .await
+        .unwrap();
     assert_eq!(wait_seen().await, "segundo|construido");
     let first_release = manager.status(&slug).await.unwrap().release.unwrap();
 
@@ -1319,6 +1347,7 @@ async fn modo_local_de_punta_a_punta() {
         setup_commands: vec![setup.into()],
         start_command: "sh app.sh".into(),
         publish_dir: None,
+        auto_deploy: true,
     };
     manager
         .set_deployment(&slug, define("echo v2 > build.txt"))
@@ -1360,6 +1389,7 @@ async fn modo_local_de_punta_a_punta() {
                 setup_commands: vec![],
                 start_command: "sh app.sh".into(),
                 publish_dir: None,
+                auto_deploy: true,
             },
         )
         .await;
@@ -1394,4 +1424,68 @@ async fn modo_local_de_punta_a_punta() {
         !paths.deployment_dir(&slug).join("deploy-key").exists(),
         "la copia de la llave sigue en disco"
     );
+}
+
+/// Webhooks de GitHub: sin secreto no existen; con él, solo pasa lo firmado.
+#[tokio::test]
+async fn webhooks_de_github() {
+    use hmac::{Hmac, KeyInit, Mac};
+
+    let push = serde_json::json!({
+        "ref": "refs/heads/main",
+        "deleted": false,
+        "repository": { "full_name": "acme/nadie" }
+    })
+    .to_string();
+    let send = |router: Router, event: &'static str, signature: String| {
+        let body = push.clone();
+        async move {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("/api/webhooks/github")
+                .header("host", "hooks.example.com")
+                .header("content-type", "application/json")
+                .header("x-github-event", event)
+                .header("x-hub-signature-256", signature)
+                .body(Body::from(body))
+                .unwrap();
+            router.oneshot(request).await.unwrap().status()
+        }
+    };
+
+    assert_eq!(
+        send(app().await, "push", "sha256=00".into()).await,
+        StatusCode::NOT_FOUND
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let secret_file = dir.path().join("secreto");
+    fs::write(&secret_file, "s3cr3t-de-prueba-suficientemente-largo").unwrap();
+    fs::set_permissions(&secret_file, fs::Permissions::from_mode(0o600)).unwrap();
+    let router = app_with(&[(
+        "BLACKSMITH_GITHUB_WEBHOOK_SECRET_FILE",
+        secret_file.to_str().unwrap(),
+    )])
+    .await;
+    let mut mac =
+        Hmac::<sha2::Sha256>::new_from_slice(b"s3cr3t-de-prueba-suficientemente-largo").unwrap();
+    mac.update(push.as_bytes());
+    let good = format!(
+        "sha256={}",
+        mac.finalize()
+            .into_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
+    assert_eq!(
+        send(router.clone(), "push", format!("sha256={}", "0".repeat(64))).await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        send(router.clone(), "ping", good.clone()).await,
+        StatusCode::ACCEPTED
+    );
+    // Ningún servicio usa ese repositorio: aceptado, sin desplegar nada.
+    assert_eq!(send(router, "push", good).await, StatusCode::ACCEPTED);
 }

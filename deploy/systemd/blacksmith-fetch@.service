@@ -1,0 +1,46 @@
+# Generada por Blacksmith (agent/src/deploy/units.rs): no la edite a mano.
+# Clon de %i: descarga la rama con las credenciales del despliegue. No ejecuta código del
+# repositorio: eso lo hace blacksmith-deploy@%i, con otro usuario y sin credenciales.
+
+[Unit]
+Description=Blacksmith: clon de %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=blacksmith-fetch
+Group=blacksmith-fetch
+StateDirectory=blacksmith-fetch/%i
+StateDirectoryMode=0711
+# El clon queda legible: lo copia la preparación, que corre con otro usuario.
+UMask=0022
+Environment=HOME=%S/blacksmith-fetch/%i
+WorkingDirectory=%S/blacksmith-fetch/%i
+LoadCredential=spec:%S/blacksmith/deployments/%i/spec.json
+LoadCredential=github-token:%S/blacksmith/deployments/%i/github-token
+LoadCredential=deploy-key:%S/blacksmith/deployments/%i/deploy-key
+ExecStart=/opt/blacksmith/bin/blacksmith-agent run-fetch
+TimeoutStartSec=10min
+TemporaryFileSystem=%S/blacksmith-fetch:ro
+BindPaths=%S/blacksmith-fetch/%i
+InaccessiblePaths=-%S/blacksmith-apps
+InaccessiblePaths=-%S/blacksmith
+InaccessiblePaths=-%E/blacksmith
+InaccessiblePaths=-/run/dbus
+ProtectProc=invisible
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RemoveIPC=yes

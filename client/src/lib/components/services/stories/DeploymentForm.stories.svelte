@@ -22,6 +22,7 @@
         setupCommands: [],
         startCommand: '',
         publishDir: null,
+        autoDeploy: true,
         updatedAt: null,
     };
     const defined: ServiceDeployment = {

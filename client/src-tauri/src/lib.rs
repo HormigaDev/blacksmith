@@ -3,6 +3,7 @@ mod agent_http;
 mod agent_probe;
 mod commands;
 mod error;
+mod files;
 mod github;
 mod secrets;
 mod servers;
@@ -60,15 +61,22 @@ pub fn run() {
             app.manage(app_state(app)?);
             Ok(())
         })
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                let app = webview.app_handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Some(state) = app.try_state::<commands::AppState>() {
+                        state.log_follows.stop_all().await;
+                    }
+                });
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::ssh_save_key,
-            commands::ssh_key_info,
-            commands::ssh_forget_key,
             commands::ssh_forget_host,
             commands::tunnel_open,
             commands::tunnel_trust_host,
             commands::tunnel_close,
-            commands::tunnel_status,
             commands::servers_list,
             commands::servers_reorder,
             commands::server_remove,

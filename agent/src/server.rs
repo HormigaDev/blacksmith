@@ -44,17 +44,11 @@ pub async fn run(config: Arc<Config>, db: Database, paths: Paths) -> Result<(), 
         .map_err(|source| ServerError::Bind { addr, source })?;
 
     let (draining, drain_signal) = watch::channel(false);
-    match db.interrupt_running_deploys().await {
-        Ok(0) => {}
-        Ok(count) => tracing::warn!(
-            count,
-            "despliegues interrumpidos por el reinicio del agente"
-        ),
-        Err(error) => tracing::error!(%error, "no se pudieron cerrar los despliegues pendientes"),
-    }
     let state = AppState::new(Arc::clone(&config), db, paths);
     let services = state.services.clone();
-    // Los servicios que estaban en marcha vuelven a estarlo sin que nadie lo pida.
+    // Lo que el agente dejó a medias al pararse, y los servicios que estaban en marcha, se
+    // retoman sin que nadie lo pida.
+    tokio::spawn(services.clone().recover_deploys());
     tokio::spawn(services.clone().resume());
     let shutdown = state.shutdown.clone();
     let app = http::router(state);

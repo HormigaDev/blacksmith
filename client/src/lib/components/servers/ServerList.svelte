@@ -125,11 +125,15 @@
                 moved = true;
             }
         };
-        const end = (next: PointerEvent) => {
-            if (next.pointerId !== pointer) return;
+        const detach = () => {
             window.removeEventListener('pointermove', move);
             window.removeEventListener('pointerup', end);
             window.removeEventListener('pointercancel', end);
+            stopDragging = undefined;
+        };
+        const end = (next: PointerEvent) => {
+            if (next.pointerId !== pointer) return;
+            detach();
             draggingId = null;
             ghost = null;
             if (moved) void onCommit();
@@ -137,7 +141,12 @@
         window.addEventListener('pointermove', move);
         window.addEventListener('pointerup', end);
         window.addEventListener('pointercancel', end);
+        stopDragging = detach;
     }
+
+    // Si la lista desaparece a mitad de un arrastre, sus escuchas en `window` no deben quedarse.
+    let stopDragging: (() => void) | undefined;
+    $effect(() => () => stopDragging?.());
 
     async function keyMove(event: KeyboardEvent, index: number): Promise<void> {
         const last = entries.length - 1;

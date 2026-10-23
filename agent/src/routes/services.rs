@@ -11,7 +11,7 @@ use shared::{
 };
 
 use crate::{
-    error::{AppError, AppResult},
+    error::AppResult,
     http::{Json, Path},
     services::ServiceSlug,
     state::AppState,
@@ -37,9 +37,8 @@ pub async fn register(
 /// `DELETE /api/v1/services/{name}`: lo quita del registro y borra su archivo de variables.
 pub async fn unregister(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(slug): Path<ServiceSlug>,
 ) -> AppResult<StatusCode> {
-    let slug = slug(&name)?;
     state.services.unregister(&slug).await?;
     // Su sitio deja de servirse (los datos del sitio se borraron con el servicio).
     state.sites.forget(&slug).await;
@@ -69,92 +68,88 @@ pub async fn set_global_environment(
 /// `GET /api/v1/services/{name}/limits`: límites de recursos (sin límites si nunca se pusieron).
 pub async fn limits(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(slug): Path<ServiceSlug>,
 ) -> AppResult<Json<ServiceLimits>> {
-    Ok(Json(state.services.limits(&slug(&name)?).await?))
+    Ok(Json(state.services.limits(&slug).await?))
 }
 
 /// `PUT /api/v1/services/{name}/limits`: los aplica al momento (sin reiniciar) y los guarda.
 pub async fn set_limits(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(slug): Path<ServiceSlug>,
     Json(limits): Json<ResourceLimits>,
 ) -> AppResult<Json<ServiceLimits>> {
-    Ok(Json(
-        state.services.set_limits(&slug(&name)?, limits).await?,
-    ))
+    Ok(Json(state.services.set_limits(&slug, limits).await?))
 }
 
 /// `GET /api/v1/services/{name}/deployment`.
 pub async fn deployment(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(slug): Path<ServiceSlug>,
 ) -> AppResult<Json<ServiceDeployment>> {
-    Ok(Json(state.services.deployment(&slug(&name)?).await?))
+    Ok(Json(state.services.deployment(&slug).await?))
 }
 
 /// `PUT /api/v1/services/{name}/deployment`: sustituye la definición (solo se guarda).
 pub async fn set_deployment(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(slug): Path<ServiceSlug>,
     Json(update): Json<UpdateDeployment>,
 ) -> AppResult<Json<ServiceDeployment>> {
-    Ok(Json(
-        state.services.set_deployment(&slug(&name)?, update).await?,
-    ))
+    Ok(Json(state.services.set_deployment(&slug, update).await?))
 }
 
 /// `GET /api/v1/services/{name}/deploy-key`: parte pública de la llave, o `null` si no hay.
 pub async fn deploy_key(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(slug): Path<ServiceSlug>,
 ) -> AppResult<Json<Option<DeployKey>>> {
-    Ok(Json(state.services.deploy_key(&slug(&name)?).await?))
+    Ok(Json(state.services.deploy_key(&slug).await?))
 }
 
 /// `POST /api/v1/services/{name}/deploy-key`: la genera si no existe (idempotente).
 pub async fn create_deploy_key(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(slug): Path<ServiceSlug>,
 ) -> AppResult<Json<DeployKey>> {
-    Ok(Json(state.services.create_deploy_key(&slug(&name)?).await?))
+    Ok(Json(state.services.create_deploy_key(&slug).await?))
 }
 
 /// `GET /api/v1/services/{name}/site`: sitio de nginx del servicio, o `null`.
 pub async fn site(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(slug): Path<ServiceSlug>,
 ) -> AppResult<Json<Option<Site>>> {
-    Ok(Json(state.sites.get(&slug(&name)?).await?))
+    Ok(Json(state.sites.get(&slug).await?))
 }
 
 /// `PUT /api/v1/services/{name}/site`: lo guarda y lo aplica en nginx (si nginx lo rechaza, se
 /// mantiene el anterior). Con HTTPS, el certificado se pide en segundo plano.
 pub async fn set_site(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(slug): Path<ServiceSlug>,
     Json(config): Json<SiteConfig>,
 ) -> AppResult<Json<Site>> {
-    Ok(Json(state.sites.set(&slug(&name)?, config).await?))
+    Ok(Json(state.sites.set(&slug, config).await?))
 }
 
 /// `DELETE /api/v1/services/{name}/site`: lo retira de nginx.
 pub async fn remove_site(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(slug): Path<ServiceSlug>,
 ) -> AppResult<StatusCode> {
-    state.sites.remove(&slug(&name)?).await?;
+    state.sites.remove(&slug).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// `POST /api/v1/services/{name}/site/certificate`: vuelve a pedir el certificado.
 pub async fn retry_certificate(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(slug): Path<ServiceSlug>,
 ) -> AppResult<(StatusCode, Json<Site>)> {
     Ok((
         StatusCode::ACCEPTED,
-        Json(state.sites.retry_certificate(&slug(&name)?).await?),
+        Json(state.sites.retry_certificate(&slug).await?),
     ))
 }
 
@@ -181,11 +176,11 @@ pub async fn remove_github_access(State(state): State<AppState>) -> AppResult<St
 /// `POST /api/v1/services/{name}/deploy`: lanza un despliegue (202: sigue en segundo plano).
 pub async fn deploy(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(slug): Path<ServiceSlug>,
 ) -> AppResult<(StatusCode, Json<DeployRun>)> {
     Ok((
         StatusCode::ACCEPTED,
-        Json(state.services.deploy(&slug(&name)?).await?),
+        Json(state.services.deploy(&slug).await?),
     ))
 }
 
@@ -193,84 +188,77 @@ pub async fn deploy(
 /// plano, como un despliegue).
 pub async fn rollback(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(slug): Path<ServiceSlug>,
 ) -> AppResult<(StatusCode, Json<DeployRun>)> {
     Ok((
         StatusCode::ACCEPTED,
-        Json(state.services.rollback(&slug(&name)?).await?),
+        Json(state.services.rollback(&slug).await?),
     ))
 }
 
 /// `GET /api/v1/services/{name}/deploys`: últimos despliegues, del más reciente al más antiguo.
 pub async fn deploy_runs(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(slug): Path<ServiceSlug>,
 ) -> AppResult<Json<Vec<DeployRun>>> {
-    Ok(Json(state.services.deploy_runs(&slug(&name)?).await?))
+    Ok(Json(state.services.deploy_runs(&slug).await?))
 }
 
 /// `GET /api/v1/services/{name}/env`.
 pub async fn environment(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(slug): Path<ServiceSlug>,
 ) -> AppResult<Json<ServiceEnvironment>> {
-    Ok(Json(state.services.environment(&slug(&name)?).await?))
+    Ok(Json(state.services.environment(&slug).await?))
 }
 
 /// `PUT /api/v1/services/{name}/env`: sustituye todas las variables. Se aplican al siguiente
 /// arranque o reinicio del servicio.
 pub async fn set_environment(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(slug): Path<ServiceSlug>,
     Json(update): Json<UpdateEnvironment>,
 ) -> AppResult<Json<ServiceEnvironment>> {
     Ok(Json(
         state
             .services
-            .set_environment(&slug(&name)?, update.variables)
+            .set_environment(&slug, update.variables)
             .await?,
     ))
 }
 
 pub async fn status(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(slug): Path<ServiceSlug>,
 ) -> AppResult<Json<ServiceStatusReport>> {
-    Ok(Json(state.services.status(&slug(&name)?).await?))
+    Ok(Json(state.services.status(&slug).await?))
 }
 
 pub async fn start(
     state: State<AppState>,
-    name: Path<String>,
+    slug: Path<ServiceSlug>,
 ) -> AppResult<Json<ServiceActionReport>> {
-    act(Action::Start, state, name).await
+    act(Action::Start, state, slug).await
 }
 
 pub async fn stop(
     state: State<AppState>,
-    name: Path<String>,
+    slug: Path<ServiceSlug>,
 ) -> AppResult<Json<ServiceActionReport>> {
-    act(Action::Stop, state, name).await
+    act(Action::Stop, state, slug).await
 }
 
 pub async fn restart(
     state: State<AppState>,
-    name: Path<String>,
+    slug: Path<ServiceSlug>,
 ) -> AppResult<Json<ServiceActionReport>> {
-    act(Action::Restart, state, name).await
+    act(Action::Restart, state, slug).await
 }
 
 async fn act(
     action: Action,
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(slug): Path<ServiceSlug>,
 ) -> AppResult<Json<ServiceActionReport>> {
-    Ok(Json(state.services.run(action, &slug(&name)?).await?))
-}
-
-/// El nombre no se repite en el mensaje: viene del cliente y puede ser arbitrariamente largo.
-pub(crate) fn slug(name: &str) -> AppResult<ServiceSlug> {
-    ServiceSlug::new(name).map_err(|error| {
-        AppError::BadRequest(format!("nombre de servicio inválido: {error}").into())
-    })
+    Ok(Json(state.services.run(action, &slug).await?))
 }

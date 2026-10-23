@@ -1,22 +1,28 @@
 # Blacksmith Agent: unit de systemd para despliegue bare-metal.
 #
 # Instalación (como root):
-#   useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin blacksmith
+#   for user in blacksmith blacksmith-apps blacksmith-fetch; do
+#       useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin "$user"
+#   done
 #   install -D -o root -g root -m 0755 target/release/blacksmith-agent /opt/blacksmith/bin/blacksmith-agent
 #   install -d -o root -g blacksmith -m 0750 /etc/blacksmith
 #   install -o root -g blacksmith -m 0640 agent.env /etc/blacksmith/agent.env   # ver .env.template
 #   install -o root -g root -m 0644 deploy/polkit/10-blacksmith.rules /etc/polkit-1/rules.d/
-#   useradd --system --home-dir /var/lib/blacksmith --no-create-home --shell /usr/sbin/nologin blacksmith
-#   install -m 0644 "deploy/systemd/blacksmith@.service" "deploy/systemd/blacksmith-deploy@.service" /etc/systemd/system/
+#   install -m 0644 deploy/systemd/*.service /etc/systemd/system/
 #   install -m 0644 deploy/blacksmith.service /etc/systemd/system/blacksmith.service
 #   systemctl daemon-reload && systemctl enable --now blacksmith
+#
+# Tres usuarios: el agente (`blacksmith`), los servicios (`blacksmith-apps`) y el clon de los
+# repositorios (`blacksmith-fetch`). Solo el agente tiene permisos de polkit; ver
+# agent/src/deploy/units.rs.
 #
 # El binario y su directorio pertenecen a root: el usuario del servicio nunca debe poder
 # reemplazar su propio ejecutable.
 #
-# Gestión de units: el agente no escala privilegios (NoNewPrivileges= lo impide). Puede arrancar,
-# parar y reiniciar únicamente las units `blacksmith-*.service` porque así lo autoriza la regla de
-# polkit deploy/polkit/10-blacksmith.rules; cualquier otra petición suya a polkit se deniega.
+# Gestión de units: el agente no escala privilegios (NoNewPrivileges= lo impide). Solo puede
+# actuar sobre sus unidades (`blacksmith@`, `blacksmith-fetch@`, `blacksmith-deploy@`, nginx y
+# certbot) porque así lo autoriza la regla de polkit deploy/polkit/10-blacksmith.rules; cualquier
+# otra petición suya a polkit se deniega.
 
 [Unit]
 Description=Blacksmith Agent
@@ -92,11 +98,9 @@ ProtectKernelLogs=yes
 ProtectControlGroups=yes
 ProtectClock=yes
 ProtectHostname=yes
-# `default` y no `invisible`: las métricas de los servicios (RSS y CPU) se leen de
-# /proc/<pid>/stat y statm de su proceso principal, que corre con otro usuario. Lo que sigue
-# protegido lo protege el kernel por permisos: /proc/<pid>/environ, mem, fd… son solo del dueño,
-# y el agente no tiene capacidades (CapabilityBoundingSet= vacío) para saltárselo.
-ProtectProc=default
+# El consumo de los servicios sale de su cgroup (systemd y /sys/fs/cgroup), no de /proc: el agente
+# no necesita ver procesos de otros usuarios.
+ProtectProc=invisible
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
@@ -110,13 +114,10 @@ SystemCallErrorNumber=EPERM
 # AF_UNIX: D-Bus (systemctl), journald y sd_notify. AF_NETLINK: leer las direcciones de red del
 # servidor (GET /api/v1/host); sin CAP_NET_ADMIN, netlink solo permite consultar, no cambiar nada.
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
-# El agente solo habla con loopback (Nginx y el túnel SSH). Las tareas que necesiten red
-# (p. ej. git fetch al desplegar) deben ejecutarse en su propia unit transitoria con su propio
-# sandbox, no relajando esta.
+# El agente solo habla con loopback (Nginx y el túnel SSH). Lo que necesita red (el clon de un
+# despliegue) corre en su propia unidad (blacksmith-fetch@), no relajando esta.
 IPAddressDeny=any
 IPAddressAllow=localhost
-# Cuando el agente tenga que escribir archivos (p. ej. los .env de los proyectos), declare
-# aquí rutas concretas con ReadWritePaths=, nunca directorios amplios.
 
 [Install]
 WantedBy=multi-user.target

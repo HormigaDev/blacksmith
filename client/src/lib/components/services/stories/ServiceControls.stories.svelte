@@ -21,7 +21,6 @@
         activeState: 'inactive',
         subState: 'dead',
         pid: null,
-        metrics: null,
         deployed: true,
         release: 'r1800000000-000000000',
         previousRelease: null,
@@ -59,7 +58,6 @@
             activeState: 'active',
             subState: 'running',
             pid: 812,
-            metrics: { rssBytes: 52_428_800, rssMb: 50, cpuPercent: 3.2 },
             resources: { ...base.resources, memoryBytes: 188_743_680, cpuPercent: 3.2, tasks: 9, uptimeSecs: 3600 },
         }}
         onAction={noop}

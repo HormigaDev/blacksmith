@@ -5,7 +5,7 @@
 -->
 <script lang="ts">
     import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
-    import type { Snippet } from 'svelte';
+    import { type Snippet, untrack } from 'svelte';
 
     import { page } from '$app/state';
     import type { ServiceAction } from '$lib/agent';
@@ -47,9 +47,13 @@
         { href: `${base}/env`, label: t('services.tabs.env'), current: page.url.pathname === `${base}/env` },
     ]);
 
+    // Separados: si el sondeo dependiera de `server.list`, se relanzaría al cargarse la lista.
     $effect(() => {
-        if (!server || !service || !connected) return;
-        if (server.list === null) void server.load();
+        if (server && connected && untrack(() => server.list) === null) void server.load();
+    });
+
+    $effect(() => {
+        if (!service || !connected) return;
         void service.load();
         return service.watch();
     });

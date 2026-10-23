@@ -13,7 +13,6 @@ const status = (overrides: Partial<ServiceStatus>): ServiceStatus => ({
     activeState: 'inactive',
     subState: 'dead',
     pid: null,
-    metrics: null,
     deployed: true,
     release: 'r1800000000-000000000',
     previousRelease: null,
@@ -66,7 +65,6 @@ describe('ServiceControls', () => {
                 subState: 'running',
                 pid: 42,
                 // El proceso principal (npm) usa poco; el servicio entero, más: se muestra el servicio.
-                metrics: { rssBytes: 10_485_760, rssMb: 10, cpuPercent: 1 },
                 resources: {
                     memoryBytes: 52_428_800,
                     memoryPeakBytes: null,

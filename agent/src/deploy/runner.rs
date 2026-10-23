@@ -1,7 +1,12 @@
-//! Lo que ejecutan las plantillas de systemd: `blacksmith-agent run-deploy` y `run-service`. Corre
-//! como el usuario de los servicios, nunca como el agente, y sin su configuración.
+//! Lo que ejecutan las plantillas de systemd (ver `units.rs`), nunca como el agente ni con su
+//! configuración:
+//! - `run-fetch` (`blacksmith-fetch@`): clona la rama en `%S/blacksmith-fetch/<nombre>/source` con
+//!   las credenciales. No ejecuta nada del repositorio.
+//! - `run-deploy` (`blacksmith-deploy@`): copia ese clon a una versión nueva, ejecuta la
+//!   preparación (sin credenciales), publica y activa. O, en un rollback, solo reactiva.
+//! - `run-service` (`blacksmith@`): ejecuta el comando de arranque de la versión activa.
 //!
-//! Estructura del directorio de estado (`$STATE_DIRECTORY`, `%S/blacksmith/<nombre>`):
+//! Estructura del directorio del servicio (`$STATE_DIRECTORY`, `%S/blacksmith-apps/<nombre>`):
 //!
 //! ```text
 //! releases/<id>/        una versión: clon de la rama + resultado de la preparación
@@ -32,12 +37,14 @@ use std::{
     os::unix::{fs::PermissionsExt, process::CommandExt},
     path::{Path, PathBuf},
     process::{Command, ExitCode, Stdio},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
 
-use super::spec::{BuildSpec, DeploySpec, DeployTask, is_release_id};
+use super::{
+    spec::{BuildSpec, DeploySpec, DeployTask, is_release_id},
+    units::SOURCE_ENV,
+};
 
 pub const KEEP_RELEASES: usize = 3;
 
@@ -59,17 +66,38 @@ struct ReleaseInfo {
     branch: String,
     commit: String,
     start_command: String,
-    created_at: u64,
+    created_at: i64,
 }
 
-/// `run-deploy`. Mensajes en stdout: van al journal de la unidad, que el cliente sigue en vivo.
+/// `run-fetch`. Mensajes en stdout: van al journal de la unidad, que el cliente sigue en vivo.
+pub fn run_fetch() -> ExitCode {
+    report(
+        fetch(
+            &environment_dir("STATE_DIRECTORY"),
+            &environment_dir("CREDENTIALS_DIRECTORY"),
+        )
+        .map(|commit| format!("==> Commit {commit} descargado")),
+    )
+}
+
+/// `run-deploy`.
 pub fn run_deploy() -> ExitCode {
-    match deploy(
-        &environment_dir("STATE_DIRECTORY"),
-        &environment_dir("CREDENTIALS_DIRECTORY"),
-    ) {
-        Ok(release) => {
-            step!("==> Versión {release} activa");
+    let source =
+        std::env::var_os(SOURCE_ENV).map_or_else(|| PathBuf::from("source"), PathBuf::from);
+    report(
+        deploy(
+            &environment_dir("STATE_DIRECTORY"),
+            &environment_dir("CREDENTIALS_DIRECTORY"),
+            &source,
+        )
+        .map(|release| format!("==> Versión {release} activa")),
+    )
+}
+
+fn report(result: io::Result<String>) -> ExitCode {
+    match result {
+        Ok(message) => {
+            step!("{message}");
             ExitCode::SUCCESS
         }
         Err(error) => {
@@ -106,14 +134,59 @@ fn environment_dir(key: &str) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// Ejecuta la tarea de `credentials` (construir una versión nueva o reactivar una anterior) en
-/// `state`. Devuelve el id de la versión activada.
-pub fn deploy(state: &Path, credentials: &Path) -> io::Result<String> {
+fn read_spec(credentials: &Path) -> io::Result<DeploySpec> {
     let spec: DeploySpec = serde_json::from_slice(&fs::read(credentials.join("spec"))?)
         .map_err(|error| io::Error::other(format!("especificación ilegible: {error}")))?;
     if !is_release_id(&spec.release) {
         return Err(io::Error::other("id de versión inválido"));
     }
+    Ok(spec)
+}
+
+/// Clona la rama de la especificación en `<state>/source`, sustituyendo el clon anterior.
+/// Devuelve el commit.
+pub fn fetch(state: &Path, credentials: &Path) -> io::Result<String> {
+    let DeployTask::Build(spec) = read_spec(credentials)?.task else {
+        return Err(io::Error::other("un rollback no descarga nada"));
+    };
+    if spec.start_command.trim().is_empty() && spec.publish_dir.is_none() {
+        return Err(io::Error::other(
+            "no hay comando de arranque ni carpeta pública",
+        ));
+    }
+    let source = state.join("source");
+    if source.exists() {
+        fs::remove_dir_all(&source)?;
+    }
+    let git = Git::new(credentials, state, spec.known_hosts.as_deref())?;
+    step!("==> Comprobando el acceso a {}", spec.clone_url);
+    check_access(&spec, &git)?;
+    step!("==> Clonando {} ({})", spec.clone_url, spec.branch);
+    let cloned = run(git
+        .command()
+        .args([
+            "clone",
+            "--quiet",
+            "--depth",
+            "1",
+            "--single-branch",
+            "--branch",
+        ])
+        .arg(&spec.branch)
+        .arg("--")
+        .arg(&spec.clone_url)
+        .arg(&source))
+    .and_then(|()| commit(&source));
+    if cloned.is_err() {
+        let _ = fs::remove_dir_all(&source);
+    }
+    cloned
+}
+
+/// Ejecuta la tarea de la especificación en `state`: construir una versión nueva a partir del
+/// clon `source`, o reactivar una anterior. Devuelve el id de la versión activada.
+pub fn deploy(state: &Path, credentials: &Path, source: &Path) -> io::Result<String> {
+    let spec = read_spec(credentials)?;
     let releases = state.join("releases");
     fs::create_dir_all(&releases)?;
     let id = spec.release;
@@ -134,26 +207,27 @@ pub fn deploy(state: &Path, credentials: &Path) -> io::Result<String> {
             if release.exists() {
                 return Err(io::Error::other(format!("la versión {id} ya existe")));
             }
-            let git = Git::new(credentials, state, build_spec.known_hosts.as_deref())?;
-            let commit = match build(&build_spec, &git, &release) {
+            let public = state.join("public").join(&id);
+            let built = build(&build_spec, source, &release).and_then(|commit| {
+                if let Some(dir) = &build_spec.publish_dir {
+                    publish(&release, dir, &public)?;
+                }
+                Ok(commit)
+            });
+            let commit = match built {
                 Ok(commit) => commit,
                 Err(error) => {
                     // La versión a medias no se queda: la activa sigue intacta.
                     let _ = fs::remove_dir_all(&release);
+                    let _ = fs::remove_dir_all(&public);
                     return Err(error);
                 }
             };
-            if let Some(dir) = &build_spec.publish_dir
-                && let Err(error) = publish(&release, dir, &state.join("public").join(&id))
-            {
-                let _ = fs::remove_dir_all(&release);
-                return Err(error);
-            }
             let info = ReleaseInfo {
                 branch: build_spec.branch.clone(),
                 commit,
                 start_command: build_spec.start_command.clone(),
-                created_at: now(),
+                created_at: crate::unix_now(),
             };
             let info_json = serde_json::to_vec_pretty(&info).map_err(io::Error::other)?;
             fs::write(releases.join(format!("{id}.json")), info_json)?;
@@ -254,39 +328,16 @@ impl Git {
     }
 }
 
-fn build(spec: &BuildSpec, git: &Git, release: &Path) -> io::Result<String> {
-    if spec.start_command.trim().is_empty() && spec.publish_dir.is_none() {
+/// Copia el clon a `release` y ejecuta allí la preparación. Devuelve el commit.
+fn build(spec: &BuildSpec, source: &Path, release: &Path) -> io::Result<String> {
+    if !source.join(".git").is_dir() {
         return Err(io::Error::other(
-            "no hay comando de arranque ni carpeta pública",
+            "no hay clon de la rama: falló la descarga",
         ));
     }
-    step!("==> Comprobando el acceso a {}", spec.clone_url);
-    check_access(spec, git)?;
-    step!("==> Clonando {} ({})", spec.clone_url, spec.branch);
-    run(git
-        .command()
-        .args([
-            "clone",
-            "--quiet",
-            "--depth",
-            "1",
-            "--single-branch",
-            "--branch",
-        ])
-        .arg(&spec.branch)
-        .arg("--")
-        .arg(&spec.clone_url)
-        .arg(release))?;
-    let output = git
-        .command()
-        .arg("-C")
-        .arg(release)
-        .args(["rev-parse", "HEAD"])
-        .stderr(Stdio::inherit())
-        .output()?;
-    let commit = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    copy_tree(source, release)?;
+    let commit = commit(release)?;
     step!("==> Commit {commit}");
-
     for (index, command) in spec.setup_commands.iter().enumerate() {
         step!(
             "==> [{}/{}] {command}",
@@ -297,6 +348,57 @@ fn build(spec: &BuildSpec, git: &Git, release: &Path) -> io::Result<String> {
             .map_err(|error| io::Error::other(format!("falló «{command}»: {error}")))?;
     }
     Ok(commit)
+}
+
+/// Commit de `HEAD` (40 hexadecimales), leído sin ejecutar git: el repositorio es de otro usuario
+/// y git se negaría a abrirlo (`safe.directory`).
+fn commit(repo: &Path) -> io::Result<String> {
+    let invalid = || io::Error::other("el clon no tiene un commit válido");
+    let git = repo.join(".git");
+    let head = fs::read_to_string(git.join("HEAD"))?;
+    let head = head.trim();
+    let commit = match head.strip_prefix("ref: ") {
+        Some(reference) if !reference.contains("..") => {
+            match fs::read_to_string(git.join(reference)) {
+                Ok(commit) => commit.trim().to_owned(),
+                // Una rama recién clonada puede estar solo en `packed-refs`.
+                Err(_) => fs::read_to_string(git.join("packed-refs"))?
+                    .lines()
+                    .find_map(|line| {
+                        line.split_once(' ')
+                            .filter(|(_, name)| *name == reference)
+                            .map(|(commit, _)| commit.to_owned())
+                    })
+                    .ok_or_else(invalid)?,
+            }
+        }
+        Some(_) => return Err(invalid()),
+        None => head.to_owned(),
+    };
+    if commit.len() == 40 && commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(commit)
+    } else {
+        Err(invalid())
+    }
+}
+
+/// Copia un árbol conservando los permisos de los archivos (el bit de ejecución) y los enlaces
+/// simbólicos tal cual (dentro de la versión, que es privada del servicio).
+fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
+    fs::create_dir(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        let target = to.join(entry.file_name());
+        if kind.is_dir() {
+            copy_tree(&entry.path(), &target)?;
+        } else if kind.is_symlink() {
+            std::os::unix::fs::symlink(fs::read_link(entry.path())?, &target)?;
+        } else if kind.is_file() {
+            fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
 }
 
 /// Comprueba, antes de clonar, que hay acceso y que la rama existe (`git ls-remote`), para
@@ -439,6 +541,10 @@ fn copy_public(from: &Path, to: &Path) -> io::Result<()> {
     for entry in fs::read_dir(from)? {
         let entry = entry?;
         let kind = entry.file_type()?;
+        // El historial de git nunca se publica, aunque la carpeta pública sea la raíz.
+        if entry.file_name() == ".git" {
+            continue;
+        }
         let target = to.join(entry.file_name());
         if kind.is_dir() {
             copy_public(&entry.path(), &target)?;
@@ -495,12 +601,6 @@ fn start_command(app: &Path) -> io::Result<String> {
     let info: ReleaseInfo = serde_json::from_slice(&fs::read(&info_path)?)
         .map_err(|error| io::Error::other(format!("{}: {error}", info_path.display())))?;
     Ok(info.start_command)
-}
-
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }
 
 #[cfg(test)]
@@ -568,6 +668,15 @@ mod tests {
             release: release.to_owned(),
             task: DeployTask::Activate,
         }
+    }
+
+    /// Clon (si la tarea construye) y despliegue, como hacen las dos unidades.
+    fn deploy_from(state: &Path, credentials: &Path) -> io::Result<String> {
+        let clone = state.with_file_name("clon");
+        if matches!(read_spec(credentials)?.task, DeployTask::Build(_)) {
+            fetch(&clone, credentials)?;
+        }
+        deploy(state, credentials, &clone.join("source"))
     }
 
     fn active(state: &Path) -> String {
@@ -690,7 +799,7 @@ mod tests {
         let url = origin(dir.path(), &[("app.sh", "echo hola")]);
         let state = dir.path().join("estado");
         let spec = spec(url, &["echo construido > build.txt"], "sh app.sh");
-        let id = deploy(&state, &credentials(dir.path(), &spec)).unwrap();
+        let id = deploy_from(&state, &credentials(dir.path(), &spec)).unwrap();
 
         let app = state.join("app");
         assert!(fs::symlink_metadata(&app).unwrap().file_type().is_symlink());
@@ -710,13 +819,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let url = origin(dir.path(), &[("app.sh", "echo hola")]);
         let state = dir.path().join("estado");
-        let good = deploy(
+        let good = deploy_from(
             &state,
             &credentials(dir.path(), &spec(url.clone(), &[], "sh app.sh")),
         )
         .unwrap();
 
-        let error = deploy(
+        let error = deploy_from(
             &state,
             &credentials(dir.path(), &spec(url, &["exit 3"], "sh app.sh")),
         )
@@ -749,8 +858,8 @@ mod tests {
             release: new_release_id(),
             task: DeployTask::Build(wrong),
         };
-        assert!(deploy(&state, &credentials(dir.path(), &wrong)).is_err());
-        assert!(deploy(&state, &credentials(dir.path(), &spec(url, &[], "  "))).is_err());
+        assert!(deploy_from(&state, &credentials(dir.path(), &wrong)).is_err());
+        assert!(deploy_from(&state, &credentials(dir.path(), &spec(url, &[], "  "))).is_err());
         assert!(!state.join("app").exists());
     }
 
@@ -796,7 +905,7 @@ mod tests {
             "ln -s /etc/hostname dist/fuera",
             "chmod 600 dist/index.html",
         ];
-        let first = deploy(
+        let first = deploy_from(
             &state,
             &credentials(dir.path(), &with_public(&setup, "dist")),
         )
@@ -816,7 +925,7 @@ mod tests {
         );
         assert!(!current.join("fuera").exists(), "un enlace no se publica");
 
-        let second = deploy(
+        let second = deploy_from(
             &state,
             &credentials(
                 dir.path(),
@@ -828,7 +937,7 @@ mod tests {
             fs::read_to_string(current.join("index.html")).unwrap(),
             "v2\n"
         );
-        deploy(&state, &credentials(dir.path(), &activate_spec(&first))).unwrap();
+        deploy_from(&state, &credentials(dir.path(), &activate_spec(&first))).unwrap();
         assert_eq!(
             fs::read_to_string(current.join("index.html")).unwrap(),
             "v1\n"
@@ -837,7 +946,7 @@ mod tests {
 
         // Una carpeta pública que es un enlace fuera del repositorio, o que no existe, falla.
         for (setup, publish) in [(&["ln -s /etc web"][..], "web"), (&[][..], "dist")] {
-            let error = deploy(
+            let error = deploy_from(
                 &state,
                 &credentials(dir.path(), &with_public(setup, publish)),
             )
@@ -858,40 +967,40 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let url = origin(dir.path(), &[("app.sh", "echo hola")]);
         let state = dir.path().join("estado");
-        let first = deploy(
+        let first = deploy_from(
             &state,
             &credentials(dir.path(), &spec(url.clone(), &[], "sh app.sh")),
         )
         .unwrap();
-        let second = deploy(
+        let second = deploy_from(
             &state,
             &credentials(dir.path(), &spec(url.clone(), &[], "sh app.sh v2")),
         )
         .unwrap();
         assert_eq!(active(&state), second);
 
-        deploy(&state, &credentials(dir.path(), &activate_spec(&first))).unwrap();
+        deploy_from(&state, &credentials(dir.path(), &activate_spec(&first))).unwrap();
         assert_eq!(active(&state), first);
         assert_eq!(start_command(&state.join("app")).unwrap(), "sh app.sh");
-        deploy(&state, &credentials(dir.path(), &activate_spec(&second))).unwrap();
+        deploy_from(&state, &credentials(dir.path(), &activate_spec(&second))).unwrap();
         assert_eq!(active(&state), second);
 
         // Con la anterior activa, varios despliegues nuevos no la borran.
-        deploy(&state, &credentials(dir.path(), &activate_spec(&first))).unwrap();
+        deploy_from(&state, &credentials(dir.path(), &activate_spec(&first))).unwrap();
         for _ in 0..KEEP_RELEASES + 1 {
-            deploy(
+            deploy_from(
                 &state,
                 &credentials(dir.path(), &spec(url.clone(), &[], "sh app.sh")),
             )
             .unwrap();
         }
         let latest = active(&state);
-        let previous_kept = deploy(&state, &credentials(dir.path(), &activate_spec(&latest)));
+        let previous_kept = deploy_from(&state, &credentials(dir.path(), &activate_spec(&latest)));
         assert!(previous_kept.is_ok());
 
         // Una versión que ya no existe, o un id que no es de versión, no se activa.
         assert!(
-            deploy(
+            deploy_from(
                 &state,
                 &credentials(dir.path(), &activate_spec("r0000000000-000000000"))
             )
@@ -899,7 +1008,7 @@ mod tests {
             .to_string()
             .contains("ya no está en el servidor")
         );
-        assert!(deploy(&state, &credentials(dir.path(), &activate_spec("../x"))).is_err());
+        assert!(deploy_from(&state, &credentials(dir.path(), &activate_spec("../x"))).is_err());
         assert_eq!(active(&state), latest);
     }
 }

@@ -12,15 +12,19 @@ use zeroize::Zeroizing;
 
 use crate::error::{CommandError, CommandResult};
 
+/// Las direcciones de GitHub que la app abre en el navegador.
+const GITHUB_WEB_PREFIX: &str = "https://github.com/";
 const API_VERSION: &str = "2022-11-28";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const PER_PAGE: usize = 100;
 /// Más que suficiente para elegir un repositorio; evita paginar sin fin.
 const MAX_REPOSITORIES: usize = 1000;
 const MAX_BRANCHES: usize = 500;
+/// Páginas de llaves de despliegue que se revisan (100 por página).
+const MAX_KEY_PAGES: usize = 10;
 
 /// Respuesta de `POST /login/device/code`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct DeviceCode {
     pub device_code: Zeroizing<String>,
     pub user_code: String,
@@ -30,12 +34,34 @@ pub struct DeviceCode {
 }
 
 /// Resultado de un sondeo de `POST /login/oauth/access_token`.
-#[derive(Debug)]
 pub enum Poll {
     Pending,
     /// GitHub pide esperar más entre sondeos (segundos que añadir).
     SlowDown(u64),
     Authorized(Zeroizing<String>),
+}
+
+// A mano: `Zeroizing` muestra su contenido en `Debug`, y un `{:?}` no debe imprimir el código de
+// dispositivo ni el token.
+impl std::fmt::Debug for DeviceCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeviceCode")
+            .field("user_code", &self.user_code)
+            .field("verification_uri", &self.verification_uri)
+            .field("expires_in", &self.expires_in)
+            .field("interval", &self.interval)
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for Poll {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pending => f.write_str("Pending"),
+            Self::SlowDown(seconds) => f.debug_tuple("SlowDown").field(seconds).finish(),
+            Self::Authorized(_) => f.write_str("Authorized(..)"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,9 +132,16 @@ impl GitHubClient {
                 status: status.as_u16(),
             });
         }
-        serde_json::from_value(body).map_err(|_| CommandError::GitHub {
+        let code: DeviceCode = serde_json::from_value(body).map_err(|_| CommandError::GitHub {
             status: status.as_u16(),
-        })
+        })?;
+        // La interfaz abre esta dirección en el navegador: solo una página de GitHub.
+        if !code.verification_uri.starts_with(GITHUB_WEB_PREFIX) {
+            return Err(CommandError::GitHub {
+                status: status.as_u16(),
+            });
+        }
+        Ok(code)
     }
 
     pub async fn poll_token(&self, client_id: &str, device_code: &str) -> CommandResult<Poll> {
@@ -296,20 +329,43 @@ impl GitHubClient {
             401 => Err(CommandError::GitHubNotConnected),
             // Sin el permiso Administration, o la App no está instalada en ese repositorio.
             403 | 404 => Err(CommandError::GitHubPermissionMissing),
-            // Ya existe: bien si es de este repositorio (se comprueba comparando la llave).
+            // 422 es «ya existe» (bien si es de este repositorio: se compara la llave) o una llave
+            // que GitHub no acepta; lo dice el mensaje del error.
             422 => {
-                let ours = key.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
-                let existing: Vec<Existing> = self
-                    .get(token, &format!("/repos/{owner}/{name}/keys?per_page=100"))
-                    .await?;
-                if existing
-                    .iter()
-                    .any(|candidate| candidate.key.trim() == ours)
-                {
-                    Ok(())
-                } else {
-                    Err(CommandError::GitHubKeyInUse)
+                let body: serde_json::Value = response.json().await.unwrap_or_default();
+                let in_use = body
+                    .get("errors")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|errors| {
+                        errors.iter().any(|error| {
+                            error
+                                .get("message")
+                                .and_then(serde_json::Value::as_str)
+                                .is_some_and(|message| message.contains("already in use"))
+                        })
+                    });
+                if !in_use {
+                    return Err(CommandError::GitHub { status: 422 });
                 }
+                let ours = key.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
+                for page in 1..=MAX_KEY_PAGES {
+                    let existing: Vec<Existing> = self
+                        .get(
+                            token,
+                            &format!("/repos/{owner}/{name}/keys?per_page={PER_PAGE}&page={page}"),
+                        )
+                        .await?;
+                    if existing
+                        .iter()
+                        .any(|candidate| candidate.key.trim() == ours)
+                    {
+                        return Ok(());
+                    }
+                    if existing.len() < PER_PAGE {
+                        break;
+                    }
+                }
+                Err(CommandError::GitHubKeyInUse)
             }
             status => Err(CommandError::GitHub { status }),
         }
@@ -444,6 +500,10 @@ pub(crate) mod tests {
             (200, r#"{"error":"access_denied"}"#.into()),
             (200, r#"{"error":"expired_token"}"#.into()),
             (200, r#"{"error":"device_flow_disabled"}"#.into()),
+            (
+                200,
+                r#"{"device_code":"dc","user_code":"X","verification_uri":"https://evil.example/login","expires_in":900,"interval":5}"#.into(),
+            ),
         ])
         .await;
         let client = client(&github);
@@ -473,6 +533,8 @@ pub(crate) mod tests {
             client.poll_token("x", "dc").await,
             Err(CommandError::GitHubDeviceFlowDisabled)
         ));
+        // Una dirección que no es de GitHub no llega a abrirse en el navegador.
+        assert!(client.device_code("Iv23liABC").await.is_err());
         let requests = github.requests.lock().await;
         assert!(requests[0].starts_with("POST /login/device/code "));
         assert!(requests[1].contains("urn:ietf:params:oauth:grant-type:device_code"));
@@ -530,13 +592,17 @@ pub(crate) mod tests {
                 403,
                 r#"{"message":"Resource not accessible by integration"}"#.into(),
             ),
-            (422, r#"{"message":"key is already in use"}"#.into()),
+            (422, r#"{"message":"Validation Failed","errors":[{"resource":"PublicKey","code":"custom","field":"key","message":"key is already in use"}]}"#.into()),
             (
                 200,
                 r#"[{"key":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOk"}]"#.into(),
             ),
-            (422, r#"{"message":"key is already in use"}"#.into()),
+            (422, r#"{"message":"Validation Failed","errors":[{"resource":"PublicKey","code":"custom","field":"key","message":"key is already in use"}]}"#.into()),
             (200, r#"[]"#.into()),
+            (
+                422,
+                r#"{"message":"Validation Failed","errors":[{"resource":"PublicKey","code":"custom","field":"key","message":"key is invalid. You must supply a key in OpenSSH public key format"}]}"#.into(),
+            ),
         ])
         .await;
         let client = client(&github);
@@ -558,6 +624,11 @@ pub(crate) mod tests {
         assert!(matches!(
             client.add_deploy_key("t", "o", "r", "x", key).await,
             Err(CommandError::GitHubKeyInUse)
+        ));
+        // Otro 422 (llave rechazada) no es «ya en uso».
+        assert!(matches!(
+            client.add_deploy_key("t", "o", "r", "x", key).await,
+            Err(CommandError::GitHub { status: 422 })
         ));
         assert!(matches!(
             client

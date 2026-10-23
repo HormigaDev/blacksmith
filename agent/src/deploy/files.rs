@@ -1,12 +1,15 @@
-//! Archivos privados del agente: la especificación de cada despliegue y la credencial de GitHub.
-//! Solo los lee el agente (`0600`, en su directorio) y la unidad de despliegue, que los recibe
-//! como credenciales de systemd (`LoadCredential=`).
+//! Archivos privados del agente: la especificación de cada despliegue, sus credenciales (token de
+//! GitHub y llave de despliegue) y la cuenta de GitHub. Solo los lee el agente (`0600`, en su
+//! directorio) y las unidades del despliegue, que los reciben como credenciales de systemd
+//! (`LoadCredential=`).
 
 use std::{
+    ffi::OsString,
     fs,
     io::{self, Write},
     os::unix::fs::{DirBuilderExt, OpenOptionsExt},
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -24,25 +27,48 @@ fn io_error(path: &Path) -> impl FnOnce(io::Error) -> FileError + '_ {
     }
 }
 
-/// Escribe un archivo privado (`0600`, directorio `0700`) de forma atómica (temporal + `rename`).
-pub fn write_private(path: &Path, content: &[u8]) -> Result<(), FileError> {
-    let dir = path.parent().unwrap_or(Path::new("."));
+/// Ruta temporal junto a `path`, propia de cada llamada: dos escrituras a la vez del mismo archivo
+/// no comparten temporal (una borraría o renombraría el de la otra).
+pub fn temporary_path(path: &Path) -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let mut name = OsString::from(".");
+    name.push(path.file_name().unwrap_or_default());
+    name.push(format!(
+        ".{}.{}.tmp",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    path.with_file_name(name)
+}
+
+/// Crea el directorio (y los que falten) solo accesible para el agente.
+pub fn private_dir(dir: &Path) -> Result<(), FileError> {
     fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
         .create(dir)
-        .map_err(io_error(dir))?;
-    let temporary = path.with_extension("tmp");
-    let _ = fs::remove_file(&temporary);
+        .map_err(io_error(dir))
+}
+
+/// Escribe un archivo privado (`0600`, directorio `0700`) de forma atómica (temporal + `rename`).
+pub fn write_private(path: &Path, content: &[u8]) -> Result<(), FileError> {
+    private_dir(path.parent().unwrap_or(Path::new(".")))?;
+    let temporary = temporary_path(path);
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
         .open(&temporary)
         .map_err(io_error(&temporary))?;
-    file.write_all(content).map_err(io_error(&temporary))?;
-    file.sync_all().map_err(io_error(&temporary))?;
-    fs::rename(&temporary, path).map_err(io_error(path))
+    let written = file
+        .write_all(content)
+        .and_then(|()| file.sync_all())
+        .map_err(io_error(&temporary))
+        .and_then(|()| fs::rename(&temporary, path).map_err(io_error(path)));
+    if written.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    written
 }
 
 /// Lee un archivo privado; `None` si no existe.

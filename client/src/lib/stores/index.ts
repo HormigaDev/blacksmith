@@ -4,4 +4,4 @@
  */
 export { github } from '$lib/github';
 export { servers } from '$lib/servers/servers.svelte';
-export { ServerServices, ServiceEntry, serviceStore } from './services.svelte';
+export { serviceStore } from './services.svelte';

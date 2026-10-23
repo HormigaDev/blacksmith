@@ -29,12 +29,13 @@ fn main() -> ExitCode {
 
     // Lo que ejecutan las plantillas de systemd (deploy/systemd/): sin configuración del agente.
     match std::env::args().nth(1).as_deref() {
+        Some("run-fetch") => return runner::run_fetch(),
         Some("run-deploy") => return runner::run_deploy(),
         Some("run-service") => return runner::run_service(),
         Some("write-units") => return write_units(std::env::args().nth(2)),
         Some(other) => {
             eprintln!(
-                "blacksmith-agent: orden desconocida «{other}» (run-deploy, run-service, write-units <dir>)"
+                "blacksmith-agent: orden desconocida «{other}» (run-fetch, run-deploy, run-service, write-units <dir>)"
             );
             return ExitCode::from(EX_USAGE);
         }

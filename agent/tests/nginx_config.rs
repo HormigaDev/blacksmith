@@ -101,7 +101,7 @@ fn nginx_acepta_todas_las_plantillas() {
                 upstream: template.proxies().then(|| "127.0.0.1:3000".into()),
                 root: template
                     .serves_files()
-                    .then(|| format!("/var/lib/blacksmith/{service}/public/current")),
+                    .then(|| format!("/var/lib/blacksmith-apps/{service}/public/current")),
                 tls,
                 // Rutas hacia otros puertos en todas: una normal y una de WebSocket.
                 routes: vec![
@@ -168,4 +168,73 @@ fn nginx_acepta_todas_las_plantillas() {
         })
         .collect();
     assert!(warnings.is_empty(), "nginx avisa:\n{}", warnings.join("\n"));
+}
+
+/// `check-sites.sh` (la comprobación que hace root antes de `nginx -t`) acepta todo lo que genera
+/// el agente y rechaza lo que solo escribiría un agente comprometido.
+#[test]
+fn la_unidad_privilegiada_solo_acepta_sitios_del_agente() {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../deploy/nginx/check-sites.sh");
+    let apps = "/var/lib/blacksmith-apps";
+    let check = |sites: &Path| {
+        Command::new("/bin/sh")
+            .arg(&script)
+            .arg(sites)
+            .arg(apps)
+            .output()
+            .unwrap()
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let templates_dir = dir.path().join("sin-plantillas-propias");
+    for template in SiteTemplate::ALL {
+        for tls in [false, true] {
+            let vars = SiteVars {
+                service: "web".into(),
+                template,
+                domains: vec!["web.example.com".into()],
+                upstream: template.proxies().then(|| "127.0.0.1:3000".into()),
+                root: template
+                    .serves_files()
+                    .then(|| format!("{apps}/web/public/current")),
+                tls,
+                routes: vec![SiteRoute {
+                    path: "/socket.io/".into(),
+                    port: 3001,
+                    websocket: true,
+                }],
+            };
+            let body = render_body(&load(&templates_dir, template).unwrap(), &vars).unwrap();
+            fs::write(
+                dir.path()
+                    .join(format!("{}-{tls}.conf", template.file_stem())),
+                render_site(&body, &vars),
+            )
+            .unwrap();
+        }
+    }
+    let output = check(dir.path());
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    for malicious in [
+        "server { access_log /etc/cron.d/x; }",
+        "server { include /etc/shadow; }",
+        "server { root /etc; }",
+        "server { root /var/lib/blacksmith-apps/../../etc; }",
+        "server { location / { proxy_pass http://unix:/var/run/docker.sock:; } }",
+        "server { ssl_certificate_key /etc/ssh/ssh_host_ed25519_key; }",
+        "server { perl_require /tmp/x.pm; }",
+        "server { client_body_temp_path /etc/x; }",
+        // Un `#` entre comillas no oculta lo que sigue.
+        "server { add_header X \"#\"; error_log /root/x; }",
+        "server { add_header X '\\''; access_log /etc/x; }",
+    ] {
+        let bad = tempfile::tempdir().unwrap();
+        fs::write(bad.path().join("x.conf"), malicious).unwrap();
+        assert!(!check(bad.path()).status.success(), "aceptó: {malicious}");
+    }
 }

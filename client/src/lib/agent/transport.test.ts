@@ -4,7 +4,7 @@ const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 
 const { agentFetch, AGENT_BASE_URL } = await import('./transport');
-const { createHttpClient, HttpError, NetworkError, describeError } = await import('$lib/http');
+const { createHttpClient, HttpError, NetworkError, TimeoutError, describeError } = await import('$lib/http');
 
 const json = (status: number, body: unknown) => ({
     status,
@@ -17,6 +17,16 @@ const json = (status: number, body: unknown) => ({
 describe('agentFetch', () => {
     beforeEach(() => {
         invoke.mockReset();
+    });
+
+    test('el tiempo máximo corta la espera aunque Rust no responda', async () => {
+        invoke.mockReturnValue(new Promise(() => {}));
+        const client = createHttpClient({
+            baseUrl: AGENT_BASE_URL,
+            fetch: agentFetch('deploy@vps:22'),
+            retry: { retries: 0 },
+        });
+        await expect(client.get('services', { timeoutMs: 20 })).rejects.toBeInstanceOf(TimeoutError);
     });
 
     test('envía a Rust solo el servidor, el método, la ruta y el cuerpo', async () => {

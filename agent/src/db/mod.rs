@@ -12,7 +12,6 @@ use std::{
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use rusqlite::{
@@ -20,19 +19,22 @@ use rusqlite::{
 };
 
 use shared::{
-    DeployKind, DeployRun, DeployStatus, Priority, RepositoryAccess, RepositoryRef, ResourceLimits,
-    SiteConfig, SiteTemplate, TlsStatus, UpdateDeployment,
+    DeployKind, DeployRun, DeployStatus, RepositoryRef, ResourceLimits, SiteConfig, TlsStatus,
+    UpdateDeployment,
 };
 
 use crate::services::{Service, ServiceDescription, ServiceId, ServiceName, ServiceSlug};
 
 /// Versión del esquema de `schema.sql`. Se guarda en `PRAGMA user_version`.
-pub const SCHEMA_VERSION: i64 = 11;
+pub const SCHEMA_VERSION: i64 = 12;
 const SCHEMA: &str = include_str!("schema.sql");
 
 /// Migraciones `(versión de origen, SQL)`, en orden: cada una lleva a la siguiente versión. Una
 /// base de datos nueva las ejecuta todas tras `schema.sql`.
-const MIGRATIONS: [(i64, &str); 1] = [(10, include_str!("limits.sql"))];
+const MIGRATIONS: [(i64, &str); 2] = [
+    (10, include_str!("limits.sql")),
+    (11, include_str!("auto_deploy.sql")),
+];
 /// Versión de `schema.sql` sin migraciones.
 const BASE_VERSION: i64 = 10;
 
@@ -157,7 +159,7 @@ impl Database {
         description: ServiceDescription,
     ) -> Result<Service, DbError> {
         self.call(move |connection| {
-            let now = now();
+            let now = crate::unix_now();
             let inserted = connection.execute(
                 "INSERT INTO services (slug, name, description, created_at, updated_at) \
                  VALUES (?1, ?2, ?3, ?4, ?4)",
@@ -172,7 +174,10 @@ impl Database {
                     created_at: now,
                     updated_at: now,
                 }),
-                Err(error) if error.sqlite_error_code() == Some(ErrorCode::ConstraintViolation) => {
+                // Solo la unicidad del slug: una CHECK que falla es otro error.
+                Err(rusqlite::Error::SqliteFailure(failure, _))
+                    if failure.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
+                {
                     Err(DbError::DuplicateSlug(slug))
                 }
                 Err(error) => Err(error.into()),
@@ -230,7 +235,7 @@ impl Database {
             connection
                 .query_row(
                     "SELECT repo_owner, repo_name, repo_branch, setup_commands, start_command, updated_at, access, \
-                     publish_dir FROM deployments WHERE service_id = ?1",
+                     publish_dir, auto_deploy FROM deployments WHERE service_id = ?1",
                     [id.0],
                     |row| {
                         let owner: Option<String> = row.get(0)?;
@@ -243,23 +248,19 @@ impl Database {
                             row.get::<_, String>(4)?,
                             row.get::<_, i64>(5)?,
                             row.get::<_, String>(6)?,
-                            row.get::<_, Option<String>>(7)?,
+                            (row.get::<_, Option<String>>(7)?, row.get::<_, bool>(8)?),
                         ))
                     },
                 )
                 .optional()?
-                .map(|((owner, name, branch), commands, start_command, updated_at, access, publish_dir)| {
+                .map(|((owner, name, branch), commands, start_command, updated_at, access, (publish_dir, auto_deploy))| {
                     let repository = match (owner, name, branch) {
                         (Some(owner), Some(name), Some(branch)) => Some(RepositoryRef { owner, name, branch }),
                         _ => None,
                     };
                     let setup_commands: Vec<String> = serde_json::from_str(&commands)
                         .map_err(|error| DbError::Corrupt(format!("comandos de preparación: {error}")))?;
-                    let access = match access.as_str() {
-                        "account" => RepositoryAccess::Account,
-                        "deployKey" => RepositoryAccess::DeployKey,
-                        other => return Err(DbError::Corrupt(format!("acceso «{other}»"))),
-                    };
+                    let access = from_text(&access, "acceso")?;
                     Ok((
                         UpdateDeployment {
                             repository,
@@ -267,6 +268,7 @@ impl Database {
                             setup_commands,
                             start_command,
                             publish_dir,
+                            auto_deploy,
                         },
                         updated_at,
                     ))
@@ -283,20 +285,21 @@ impl Database {
         deployment: UpdateDeployment,
     ) -> Result<i64, DbError> {
         self.call(move |connection| {
-            let now = now();
+            let now = crate::unix_now();
             let commands = serde_json::to_string(&deployment.setup_commands)
                 .map_err(|error| DbError::Corrupt(format!("comandos de preparación: {error}")))?;
             let repository = deployment.repository.as_ref();
             connection.execute(
                 "INSERT INTO deployments \
                      (service_id, repo_owner, repo_name, repo_branch, setup_commands, start_command, updated_at, access, \
-                      publish_dir) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
+                      publish_dir, auto_deploy) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
                  ON CONFLICT (service_id) DO UPDATE SET \
                      repo_owner = excluded.repo_owner, repo_name = excluded.repo_name, \
                      repo_branch = excluded.repo_branch, setup_commands = excluded.setup_commands, \
                      start_command = excluded.start_command, updated_at = excluded.updated_at, \
-                     access = excluded.access, publish_dir = excluded.publish_dir",
+                     access = excluded.access, publish_dir = excluded.publish_dir, \
+                     auto_deploy = excluded.auto_deploy",
                 params![
                     id.0,
                     repository.map(|r| r.owner.as_str()),
@@ -305,11 +308,9 @@ impl Database {
                     commands,
                     deployment.start_command,
                     now,
-                    match deployment.access {
-                        RepositoryAccess::Account => "account",
-                        RepositoryAccess::DeployKey => "deployKey",
-                    },
-                    deployment.publish_dir
+                    to_text(deployment.access),
+                    deployment.publish_dir,
+                    deployment.auto_deploy
                 ],
             )?;
             Ok(now)
@@ -335,11 +336,11 @@ impl Database {
             if running > 0 {
                 return Err(DbError::DeployInProgress);
             }
-            let now = now();
+            let now = crate::unix_now();
             transaction.execute(
                 "INSERT INTO deploy_runs (service_id, status, kind, release, branch, started_at) \
                  VALUES (?1, 'running', ?2, ?3, ?4, ?5)",
-                params![id.0, kind_text(kind), release, branch, now],
+                params![id.0, to_text(kind), release, branch, now],
             )?;
             let run = DeployRun {
                 id: transaction.last_insert_rowid(),
@@ -366,7 +367,7 @@ impl Database {
         self.call(move |connection| {
             connection.execute(
                 "UPDATE deploy_runs SET status = ?2, finished_at = ?3, detail = ?4 WHERE id = ?1",
-                params![run, status_text(status), now(), detail],
+                params![run, to_text(status), crate::unix_now(), detail],
             )?;
             Ok(())
         })
@@ -394,8 +395,8 @@ impl Database {
                 let ((id, status), (kind, release), branch, started_at, finished_at, detail) = row?;
                 Ok(DeployRun {
                     id,
-                    status: parse_status(&status)?,
-                    kind: parse_kind(&kind)?,
+                    status: from_text(&status, "estado de despliegue")?,
+                    kind: from_text(&kind, "tipo de despliegue")?,
                     release,
                     branch,
                     started_at,
@@ -458,15 +459,17 @@ impl Database {
         .await
     }
 
-    /// Al arrancar el agente: los despliegues que quedaron «en curso» ya no tienen quien los
-    /// siga. Devuelve cuántos se marcaron.
-    pub async fn interrupt_running_deploys(&self) -> Result<usize, DbError> {
+    /// Servicios con un despliegue en curso (al arrancar el agente, los que dejó a medias).
+    pub async fn services_deploying(&self) -> Result<Vec<ServiceId>, DbError> {
         self.call(|connection| {
-            Ok(connection.execute(
-                "UPDATE deploy_runs SET status = 'failed', finished_at = ?1, \
-                 detail = 'interrumpido: el agente se reinició' WHERE status = 'running'",
-                [now()],
-            )?)
+            let mut statement = connection.prepare(
+                "SELECT DISTINCT service_id FROM deploy_runs WHERE status = 'running' ORDER BY service_id",
+            )?;
+            let ids = statement
+                .query_map([], |row| row.get(0))?
+                .map(|id| id.map(ServiceId))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ids)
         })
         .await
     }
@@ -493,10 +496,7 @@ impl Database {
                 .optional()?
                 .map(
                     |((template, domains), port, https, email, (tls, tls_detail), (updated_at, routes))| {
-                        let template = SiteTemplate::ALL
-                            .into_iter()
-                            .find(|known| known.file_stem() == template)
-                            .ok_or_else(|| DbError::Corrupt(format!("plantilla «{template}»")))?;
+                        let template = from_text(&template, "plantilla")?;
                         let domains: Vec<String> = serde_json::from_str(&domains)
                             .map_err(|error| DbError::Corrupt(format!("dominios: {error}")))?;
                         let routes = serde_json::from_str(&routes)
@@ -510,7 +510,7 @@ impl Database {
                                 email,
                                 routes,
                             },
-                            tls: parse_tls(&tls)?,
+                            tls: from_text(&tls, "estado TLS")?,
                             tls_detail,
                             updated_at,
                         })
@@ -549,7 +549,7 @@ impl Database {
         tls: TlsStatus,
     ) -> Result<i64, DbError> {
         self.call(move |connection| {
-            let now = now();
+            let now = crate::unix_now();
             let domains = serde_json::to_string(&config.domains)
                 .map_err(|error| DbError::Corrupt(format!("dominios: {error}")))?;
             let routes = serde_json::to_string(&config.routes)
@@ -579,12 +579,12 @@ impl Database {
                      updated_at = excluded.updated_at, routes = excluded.routes",
                 params![
                     id.0,
-                    config.template.file_stem(),
+                    to_text(config.template),
                     domains,
                     config.port,
                     config.https,
                     config.email,
-                    tls_text(tls),
+                    to_text(tls),
                     now,
                     routes
                 ],
@@ -605,7 +605,7 @@ impl Database {
         self.call(move |connection| {
             connection.execute(
                 "UPDATE sites SET tls = ?2, tls_detail = ?3, updated_at = ?4 WHERE service_id = ?1",
-                params![id.0, tls_text(tls), detail, now()],
+                params![id.0, to_text(tls), detail, crate::unix_now()],
             )?;
             Ok(())
         })
@@ -647,12 +647,7 @@ impl Database {
                 .optional()?
                 .map(
                     |(cpu_percent, priority, memory_max, swap_max, tasks_max, updated_at)| {
-                        let priority = match priority.as_str() {
-                            "low" => Priority::Low,
-                            "normal" => Priority::Normal,
-                            "high" => Priority::High,
-                            other => return Err(DbError::Corrupt(format!("prioridad «{other}»"))),
-                        };
+                        let priority = from_text(&priority, "prioridad")?;
                         let bytes = |value: Option<i64>| {
                             value
                                 .map(u64::try_from)
@@ -680,12 +675,8 @@ impl Database {
     /// Guarda los límites (ya validados) y devuelve cuándo.
     pub async fn set_limits(&self, id: ServiceId, limits: ResourceLimits) -> Result<i64, DbError> {
         self.call(move |connection| {
-            let updated_at = now();
-            let priority = match limits.priority {
-                Priority::Low => "low",
-                Priority::Normal => "normal",
-                Priority::High => "high",
-            };
+            let updated_at = crate::unix_now();
+            let priority = to_text(limits.priority);
             // SQLite guarda enteros con signo; los límites validados caben de sobra.
             let bytes = |value: Option<u64>| value.map(|value| i64::try_from(value).unwrap_or(i64::MAX));
             connection.execute(
@@ -709,12 +700,20 @@ impl Database {
         .await
     }
 
+    pub async fn delete_limits(&self, id: ServiceId) -> Result<(), DbError> {
+        self.call(move |connection| {
+            connection.execute("DELETE FROM service_limits WHERE service_id = ?1", [id.0])?;
+            Ok(())
+        })
+        .await
+    }
+
     /// Marca si el servicio debe estar en marcha (ver `autostart` en schema.sql).
-    pub async fn set_autostart(&self, slug: ServiceSlug, enabled: bool) -> Result<(), DbError> {
+    pub async fn set_autostart(&self, id: ServiceId, enabled: bool) -> Result<(), DbError> {
         self.call(move |connection| {
             connection.execute(
-                "UPDATE services SET autostart = ?1 WHERE slug = ?2",
-                rusqlite::params![enabled, slug.as_str()],
+                "UPDATE services SET autostart = ?1 WHERE id = ?2",
+                rusqlite::params![enabled, id.0],
             )?;
             Ok(())
         })
@@ -746,6 +745,7 @@ impl Database {
     }
 
     /// Devuelve si existía.
+    #[cfg(test)]
     pub async fn delete_service(&self, id: ServiceId) -> Result<bool, DbError> {
         self.call(move |connection| {
             Ok(connection.execute("DELETE FROM services WHERE id = ?1", [id.0])? > 0)
@@ -775,29 +775,6 @@ fn service_row(row: &Row<'_>) -> rusqlite::Result<Result<Service, DbError>> {
     Ok(service)
 }
 
-fn status_text(status: DeployStatus) -> &'static str {
-    match status {
-        DeployStatus::Running => "running",
-        DeployStatus::Succeeded => "succeeded",
-        DeployStatus::Failed => "failed",
-    }
-}
-
-fn kind_text(kind: DeployKind) -> &'static str {
-    match kind {
-        DeployKind::Deploy => "deploy",
-        DeployKind::Rollback => "rollback",
-    }
-}
-
-fn parse_kind(raw: &str) -> Result<DeployKind, DbError> {
-    match raw {
-        "deploy" => Ok(DeployKind::Deploy),
-        "rollback" => Ok(DeployKind::Rollback),
-        other => Err(DbError::Corrupt(format!("tipo de despliegue «{other}»"))),
-    }
-}
-
 /// Sitio guardado de un servicio.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredSite {
@@ -807,25 +784,6 @@ pub struct StoredSite {
     pub updated_at: i64,
 }
 
-fn tls_text(tls: TlsStatus) -> &'static str {
-    match tls {
-        TlsStatus::Off => "off",
-        TlsStatus::Issuing => "issuing",
-        TlsStatus::Active => "active",
-        TlsStatus::Failed => "failed",
-    }
-}
-
-fn parse_tls(raw: &str) -> Result<TlsStatus, DbError> {
-    match raw {
-        "off" => Ok(TlsStatus::Off),
-        "issuing" => Ok(TlsStatus::Issuing),
-        "active" => Ok(TlsStatus::Active),
-        "failed" => Ok(TlsStatus::Failed),
-        other => Err(DbError::Corrupt(format!("estado TLS «{other}»"))),
-    }
-}
-
 /// Versión activa y anterior de un servicio (ver `active_release` en schema.sql).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Releases {
@@ -833,13 +791,18 @@ pub struct Releases {
     pub previous: Option<String>,
 }
 
-fn parse_status(raw: &str) -> Result<DeployStatus, DbError> {
-    match raw {
-        "running" => Ok(DeployStatus::Running),
-        "succeeded" => Ok(DeployStatus::Succeeded),
-        "failed" => Ok(DeployStatus::Failed),
-        other => Err(DbError::Corrupt(format!("estado de despliegue «{other}»"))),
+/// Enumerados como texto en la base de datos: los mismos nombres que en el contrato (`shared`,
+/// en camelCase), que coinciden con las CHECK de `schema.sql`.
+fn to_text<T: serde::Serialize>(value: T) -> String {
+    match serde_json::to_value(value) {
+        Ok(serde_json::Value::String(text)) => text,
+        _ => String::new(),
     }
+}
+
+fn from_text<T: serde::de::DeserializeOwned>(raw: &str, what: &str) -> Result<T, DbError> {
+    T::deserialize(serde::de::value::StrDeserializer::<serde::de::value::Error>::new(raw))
+        .map_err(|_| DbError::Corrupt(format!("{what} «{raw}»")))
 }
 
 fn ensure_schema(connection: &mut Connection) -> Result<(), DbError> {
@@ -927,19 +890,12 @@ fn prepare_file(path: &Path) -> Result<(), DbError> {
     Ok(())
 }
 
-fn now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX)
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     use super::*;
+    use shared::{Priority, RepositoryAccess, SiteTemplate};
 
     fn slug(slug: &str) -> ServiceSlug {
         ServiceSlug::new(slug).unwrap()
@@ -1027,16 +983,18 @@ mod tests {
     #[tokio::test]
     async fn arranque_automatico() {
         let db = Database::open_in_memory().unwrap();
+        let mut ids = std::collections::HashMap::new();
         for service in ["api", "web", "bot"] {
-            db.insert_service(slug(service), name(service), ServiceDescription::default())
+            let created = db
+                .insert_service(slug(service), name(service), ServiceDescription::default())
                 .await
                 .unwrap();
+            ids.insert(service, created.id);
         }
         assert!(db.autostart_services().await.unwrap().is_empty());
-        db.set_autostart(slug("bot"), true).await.unwrap();
-        db.set_autostart(slug("api"), true).await.unwrap();
-        db.set_autostart(slug("web"), true).await.unwrap();
-        db.set_autostart(slug("web"), false).await.unwrap();
+        for (service, enabled) in [("bot", true), ("api", true), ("web", true), ("web", false)] {
+            db.set_autostart(ids[service], enabled).await.unwrap();
+        }
         assert_eq!(
             db.autostart_services().await.unwrap(),
             [slug("api"), slug("bot")]
@@ -1086,6 +1044,8 @@ mod tests {
             setup_commands: vec!["npm ci".into(), "npm run build".into()],
             start_command: "npm start".into(),
             publish_dir: Some("dist".into()),
+            // El contrario del valor por defecto: así se comprueba que se guarda.
+            auto_deploy: false,
         };
         db.set_deployment(service.id, deployment.clone())
             .await
@@ -1132,7 +1092,11 @@ mod tests {
             .start_deploy_run(service.id, DeployKind::Rollback, release(3), "dev".into())
             .await
             .unwrap();
-        assert_eq!(db.interrupt_running_deploys().await.unwrap(), 1);
+        assert_eq!(db.services_deploying().await.unwrap(), [service.id]);
+        db.finish_deploy_run(second.id, DeployStatus::Failed, None)
+            .await
+            .unwrap();
+        assert!(db.services_deploying().await.unwrap().is_empty());
         let runs = db.deploy_runs(service.id, 10).await.unwrap();
         assert_eq!(
             runs.iter().map(|run| run.id).collect::<Vec<_>>(),
@@ -1307,32 +1271,33 @@ mod tests {
         assert!(error.is_configuration());
     }
 
-    /// Una base de datos de la versión 10 (sin límites) se actualiza sin perder nada.
+    /// Una base de datos de la versión 10 (sin límites ni despliegue automático) se actualiza sin
+    /// perder nada.
     #[tokio::test]
     async fn migra_desde_la_version_anterior() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("agent.db");
-        let db = Database::open(&path).unwrap();
-        let service = db
-            .insert_service(
-                ServiceSlug::new("api").unwrap(),
-                ServiceName::new("API").unwrap(),
-                ServiceDescription::default(),
-            )
-            .await
-            .unwrap();
-        drop(db);
-        // Como la dejaba la versión 10.
+        // Como la dejaba la versión 10: solo `schema.sql`, con un servicio y su despliegue.
         let connection = Connection::open(&path).unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
         connection
-            .execute_batch("DROP TABLE service_limits")
+            .execute_batch(
+                "INSERT INTO services (slug, name, created_at, updated_at) VALUES ('api', 'API', 1, 1);
+                 INSERT INTO deployments (service_id, setup_commands, start_command, updated_at)
+                     VALUES (1, '[]', 'npm start', 1);",
+            )
             .unwrap();
         connection.pragma_update(None, "user_version", 10).unwrap();
         drop(connection);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
 
         let db = Database::open(&path).unwrap();
-        assert_eq!(db.services().await.unwrap().len(), 1);
+        let services = db.services().await.unwrap();
+        let service = services.first().unwrap();
         assert_eq!(db.limits(service.id).await.unwrap(), None);
+        // Los despliegues que ya existían quedan con el despliegue automático activado.
+        let (deployment, _) = db.deployment(service.id).await.unwrap().unwrap();
+        assert!(deployment.auto_deploy);
         db.set_limits(service.id, ResourceLimits::default())
             .await
             .unwrap();

@@ -2,10 +2,10 @@
 //!
 //! - systemd los guarda como drop-ins en `/etc/systemd/system.control/` (persisten tras
 //!   reiniciar) y los aplica al cgroup al momento, sin reiniciar el servicio.
-//! - polkit solo deja `set-property` sobre `blacksmith@*.service`, y systemd solo acepta ahí
-//!   propiedades de control de recursos (no `ExecStart=` ni similares) en una unidad que no es
-//!   transitoria. Aun así, el agente envía siempre la lista cerrada de [`properties`], con
-//!   valores numéricos ya validados: nunca texto del cliente.
+//! - polkit solo deja `set-property` sobre `blacksmith@*.service`. En una unidad que no es
+//!   transitoria, systemd solo acepta ahí el contexto del cgroup (no `ExecStart=` ni similares),
+//!   pero todo él (`MemoryMin=`, `DeviceAllow=`…): el único filtro de propiedades es esta lista
+//!   cerrada ([`properties`]), con valores numéricos ya validados, nunca texto del cliente.
 //! - Se envían todas a la vez, también las que no tienen límite (`infinity` o vacío): así se
 //!   borra cualquier límite anterior.
 
@@ -21,7 +21,6 @@ pub const MAX_TASKS: u32 = 4_194_304;
 #[error("{0}")]
 pub struct InvalidLimits(String);
 
-/// Comprueba los límites contra la capacidad del servidor.
 pub fn validate(
     limits: ResourceLimits,
     host: HostCapacity,

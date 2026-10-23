@@ -57,10 +57,6 @@ export interface SavedServer {
     key: KeySummary;
 }
 
-export interface KeyInfo extends KeySummary {
-    passphraseSaved: boolean;
-}
-
 export interface TunnelInfo {
     targetId: string;
     /** Puerto de 127.0.0.1 en este equipo que llega al agente. */
@@ -133,29 +129,13 @@ export function targetOf(server: ServerProfile): Required<SshTarget> {
     return { host: server.host, port: server.port, username: server.username };
 }
 
-export function keyInfo(target: SshTarget): Promise<KeyInfo | null> {
-    return call('ssh_key_info', { target });
-}
-
-/** Acción destructiva: confirmar con `ConfirmDialog` antes. */
-export function forgetKey(target: SshTarget): Promise<boolean> {
-    return call('ssh_forget_key', { target });
-}
-
 /** Acción destructiva: confirmar con `ConfirmDialog` antes. */
 export function forgetHostKey(target: SshTarget): Promise<boolean> {
     return call('ssh_forget_host', { target });
 }
 
-export function openTunnel(
-    target: SshTarget,
-    options: { passphrase?: string; localPort?: number } = {},
-): Promise<TunnelInfo> {
-    return call('tunnel_open', {
-        target,
-        passphrase: options.passphrase || null,
-        localPort: options.localPort ?? null,
-    });
+export function openTunnel(target: SshTarget, options: { passphrase?: string } = {}): Promise<TunnelInfo> {
+    return call('tunnel_open', { target, passphrase: options.passphrase || null });
 }
 
 /** Confirma la llave del servidor recién presentada. Solo acepta esa huella. */
@@ -165,10 +145,6 @@ export function trustHostKey(target: SshTarget, fingerprint: string): Promise<vo
 
 export function closeTunnel(target: SshTarget): Promise<boolean> {
     return call('tunnel_close', { target });
-}
-
-export function tunnelStatus(target: SshTarget): Promise<TunnelInfo | null> {
-    return call('tunnel_status', { target });
 }
 
 /** Avisa cuando un túnel se cierra o se pierde. Fuera de Tauri no hace nada. */

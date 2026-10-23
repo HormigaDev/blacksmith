@@ -3,12 +3,16 @@
 // Instalación (como root; polkitd recarga solo al cambiar el archivo):
 //   install -o root -g root -m 0644 deploy/polkit/10-blacksmith.rules /etc/polkit-1/rules.d/
 //
-// - Solo afecta al usuario `blacksmith`; para el resto devuelve NOT_HANDLED.
+// - Solo afecta al usuario del agente, `blacksmith`; para el resto devuelve NOT_HANDLED. Los
+//   servicios corren como `blacksmith-apps` y los clones como `blacksmith-fetch`: polkit no les
+//   concede nada.
 // - Le permite:
 //     · start, stop y restart de `blacksmith@<nombre>.service` (los servicios desplegados), y
-//       set-property para sus límites de recursos (systemd solo acepta ahí propiedades de
-//       control de recursos: CPU, memoria, swap, procesos; nunca ExecStart= ni similares);
-//     · start y stop de `blacksmith-deploy@<nombre>.service` (sus despliegues);
+//       set-property para sus límites de recursos. polkit no puede filtrar propiedades: systemd
+//       acepta ahí todo el contexto del cgroup (no ExecStart= ni similares), y el agente solo
+//       envía su lista cerrada (agent/src/limits.rs);
+//     · start y stop de `blacksmith-fetch@<nombre>.service` y `blacksmith-deploy@<nombre>.service`
+//       (el clon y la preparación de sus despliegues);
 //     · start de `blacksmith-nginx.service` (valida y recarga nginx: dos órdenes fijas) y de
 //       `blacksmith-certbot@<dominio>.service` (pide un certificado de Let's Encrypt). Ver deploy/nginx/.
 //   Nada más: otras unidades (ssh, nginx, dbus, el propio agente…), otros verbos (enable, mask,
@@ -30,16 +34,16 @@ polkit.addRule(function (action, subject) {
     if (action.id === "org.freedesktop.systemd1.manage-units") {
         var unit = action.lookup("unit");
         var verb = action.lookup("verb");
-        if (typeof unit === "string" && /^blacksmith(-deploy)?@[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?\.service$/.test(unit)) {
-            var deploy = unit.indexOf("blacksmith-deploy@") === 0;
+        if (typeof unit === "string" && /^blacksmith(-deploy|-fetch)?@[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?\.service$/.test(unit)) {
+            var service = unit.indexOf("blacksmith@") === 0;
             if (verb === "start" || verb === "stop"
-                || ((verb === "restart" || verb === "set-property") && !deploy)) {
+                || ((verb === "restart" || verb === "set-property") && service)) {
                 return polkit.Result.YES;
             }
         }
         if (verb === "start" && typeof unit === "string"
             && (unit === "blacksmith-nginx.service"
-                || /^blacksmith-certbot@[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?\.service$/.test(unit))) {
+                || /^blacksmith-certbot@[a-z0-9](?:[a-z0-9.-]{0,226}[a-z0-9])?\.service$/.test(unit))) {
             return polkit.Result.YES;
         }
     }

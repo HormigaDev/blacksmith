@@ -5,9 +5,6 @@ export {
     closeTunnel,
     localAgentStatus,
     forgetHostKey,
-    forgetKey,
-    type KeyInfo,
-    keyInfo,
     listServers,
     removeServer,
     reorderServers,
@@ -21,10 +18,8 @@ export {
     saveKey,
     type SshTarget,
     trustHostKey,
-    TUNNEL_CLOSED_EVENT,
     type TunnelClosed,
     type TunnelInfo,
-    tunnelStatus,
 } from './api';
 export { type HostKeyDetails, toTunnelError, TUNNEL_ERROR_CODES, TunnelError, type TunnelErrorCode } from './errors';
 export { isLoopbackHost } from './target';

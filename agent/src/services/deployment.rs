@@ -39,7 +39,8 @@ pub enum InvalidDeployment {
     PublishDir,
 }
 
-/// Carpeta pública: relativa al repositorio y sin poder salir de él. `.` (la raíz) se acepta.
+/// Carpeta pública: relativa al repositorio y sin poder salir de él. `.` (la raíz) se acepta: el
+/// runner nunca publica `.git` y nginx no sirve archivos ocultos.
 fn normalize_publish_dir(dir: &str) -> Result<Option<String>, InvalidDeployment> {
     let dir = dir.trim().trim_end_matches('/');
     if dir.is_empty() {
@@ -109,18 +110,12 @@ pub fn normalize(update: UpdateDeployment) -> Result<UpdateDeployment, InvalidDe
             .map(normalize_publish_dir)
             .transpose()?
             .flatten(),
+        auto_deploy: update.auto_deploy,
     })
 }
 
 fn validate_repository(repository: &RepositoryRef) -> Result<(), InvalidDeployment> {
-    let owner = &repository.owner;
-    let owner_ok = (1..=39).contains(&owner.len())
-        && owner
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        && !owner.starts_with('-')
-        && !owner.ends_with('-');
-    if !owner_ok {
+    if !crate::github::valid_login(&repository.owner) {
         return Err(InvalidDeployment::Owner);
     }
     let name = &repository.name;
@@ -194,6 +189,7 @@ mod tests {
             setup_commands: setup.iter().map(|command| (*command).to_owned()).collect(),
             start_command: start.into(),
             publish_dir: None,
+            auto_deploy: true,
         }
     }
 

@@ -27,7 +27,14 @@
     import UserRoundIcon from '@lucide/svelte/icons/user-round';
     import { type Component, untrack } from 'svelte';
 
-    import type { RepositoryAccess, RepositoryRef, ServiceDeployment, UpdateDeployment } from '$lib/agent';
+    import {
+        hasControlChars,
+        type RepositoryAccess,
+        type RepositoryRef,
+        type ServiceDeployment,
+        type UpdateDeployment,
+        validBranch,
+    } from '$lib/agent';
     import type { GitHubRepository } from '$lib/github';
     import { describeError } from '$lib/http';
     import { t } from '$lib/i18n';
@@ -37,21 +44,34 @@
     import Input from '../ui/Input.svelte';
     import FilterSelect from '../ui/FilterSelect.svelte';
     import Spinner from '../ui/Spinner.svelte';
+    import Switch from '../ui/Switch.svelte';
     import ToggleGroup from '../ui/ToggleGroup.svelte';
 
     interface Props {
         deployment: ServiceDeployment;
         /** `false` si no hay cuenta de GitHub conectada. */
         githubConnected: boolean;
-        /** Repositorios accesibles; `null` mientras cargan. */
+        /** Repositorios accesibles; `null` mientras cargan (o si falló la carga). */
         repositories: readonly GitHubRepository[] | null;
+        /** Por qué no se pudieron cargar los repositorios. */
+        repositoriesError?: string | null;
+        onRetryRepositories?: () => void;
         loadBranches: (owner: string, name: string) => Promise<string[]>;
         onConnectGitHub?: () => void;
         /** Guarda la definición. Si lanza, el error se muestra aquí. */
         onSave: (update: UpdateDeployment) => Promise<void>;
     }
 
-    let { deployment, githubConnected, repositories, loadBranches, onConnectGitHub, onSave }: Props = $props();
+    let {
+        deployment,
+        githubConnected,
+        repositories,
+        repositoriesError = null,
+        onRetryRepositories,
+        loadBranches,
+        onConnectGitHub,
+        onSave,
+    }: Props = $props();
 
     const NONE = '';
     const MAX_COMMANDS = 20;
@@ -67,6 +87,7 @@
     const sectionId = $props.id();
     let startCommand = $state(initial.startCommand);
     let publishDir = $state(initial.publishDir ?? '');
+    let autoDeploy = $state(initial.autoDeploy);
     let access = $state<RepositoryAccess>(initial.access);
     const accessOptions = $derived([
         { value: 'account' as const, label: t('services.deployment.accessAccount'), icon: UserRoundIcon },
@@ -75,9 +96,6 @@
     let busy = $state(false);
     let submitted = $state(false);
     let formError = $state<string>();
-
-    // eslint-disable-next-line no-control-regex
-    const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 
     const repositoryOptions = $derived([
         { value: NONE, label: t('services.deployment.repositoryNone') },
@@ -88,12 +106,12 @@
         commands.map(({ value }) =>
             !value.trim()
                 ? t('services.deployment.commandEmpty')
-                : CONTROL.test(value)
+                : hasControlChars(value)
                   ? t('services.deployment.commandInvalid')
                   : undefined,
         ),
     );
-    const startError = $derived(CONTROL.test(startCommand) ? t('services.deployment.commandInvalid') : undefined);
+    const startError = $derived(hasControlChars(startCommand) ? t('services.deployment.commandInvalid') : undefined);
     /** Misma regla que el agente: ruta relativa dentro del repositorio, sin `..`. */
     const publishDirError = $derived.by(() => {
         const dir = publishDir.trim().replace(/\/+$/, '');
@@ -106,17 +124,23 @@
         return valid ? undefined : t('services.deployment.publishDirInvalid');
     });
 
+    // Petición de ramas vigente: si se cambia de repositorio mientras carga, la respuesta del
+    // anterior se descarta (si no, se guardaría el repositorio nuevo con una rama del viejo).
+    let branchesRequest = 0;
+
     async function fetchBranches(owner: string, name: string, preferred?: string): Promise<void> {
+        const request = ++branchesRequest;
         branchesLoading = true;
         try {
             const loaded = await loadBranches(owner, name);
+            if (request !== branchesRequest) return;
             // La rama guardada sigue elegible aunque ya no exista en GitHub.
             branches = branch && !loaded.includes(branch) ? [branch, ...loaded] : loaded;
             if (!branch) branch = preferred && loaded.includes(preferred) ? preferred : (loaded[0] ?? '');
         } catch (error) {
-            formError = describeError(error);
+            if (request === branchesRequest) formError = describeError(error);
         } finally {
-            branchesLoading = false;
+            if (request === branchesRequest) branchesLoading = false;
         }
     }
 
@@ -130,7 +154,11 @@
         repository = fullName;
         branch = '';
         branches = [];
-        if (fullName === NONE) return;
+        if (fullName === NONE) {
+            branchesRequest++;
+            branchesLoading = false;
+            return;
+        }
         const [owner = '', name = ''] = fullName.split('/');
         const known = repositories?.find((repo) => repo.fullName === fullName);
         await fetchBranches(owner, name, known?.defaultBranch);
@@ -144,15 +172,19 @@
         commands[index + offset] = item;
     }
 
+    const branchError = $derived(
+        repository !== NONE && !validBranch(branch.trim()) ? t('services.deployment.branchInvalid') : undefined,
+    );
+
     async function save(event: SubmitEvent): Promise<void> {
         event.preventDefault();
         submitted = true;
         formError = undefined;
-        if (commandErrors.some(Boolean) || startError || publishDirError) return;
+        if (commandErrors.some(Boolean) || startError || publishDirError || branchError) return;
         let repo: RepositoryRef | null = null;
         if (repository !== NONE) {
             const [owner = '', name = ''] = repository.split('/');
-            repo = { owner, name, branch };
+            repo = { owner, name, branch: branch.trim() };
         }
         busy = true;
         try {
@@ -162,6 +194,7 @@
                 setupCommands: commands.map(({ value }) => value.trim()),
                 startCommand: startCommand.trim(),
                 publishDir: publishDir.trim().replace(/\/+$/, '') || null,
+                autoDeploy,
             });
             submitted = false;
         } catch (error) {
@@ -218,7 +251,14 @@
                 {:else if repositories === null}
                     <div class="readonly">
                         <span class="label">{t('services.deployment.repository')}</span>
-                        <Spinner label={t('services.deployment.repositoriesLoading')} />
+                        {#if repositoriesError}
+                            <p class="alert" role="alert">{repositoriesError}</p>
+                            {#if onRetryRepositories}
+                                <div><Button size="sm" onclick={onRetryRepositories}>{t('common.retry')}</Button></div>
+                            {/if}
+                        {:else}
+                            <Spinner label={t('services.deployment.repositoriesLoading')} />
+                        {/if}
                     </div>
                 {:else}
                     <FilterSelect
@@ -241,12 +281,18 @@
                             searchPlaceholder={t('services.deployment.branchSearch')}
                             options={branchOptions}
                             disabled={branchesLoading}
+                            error={submitted && !branchesLoading ? branchError : undefined}
                             bind:value={branch}
                         >
                             {#snippet leading()}<GitBranchIcon />{/snippet}
                         </FilterSelect>
                     {:else}
-                        <Input label={t('services.deployment.branch')} spellcheck="false" bind:value={branch}>
+                        <Input
+                            label={t('services.deployment.branch')}
+                            spellcheck="false"
+                            error={submitted ? branchError : undefined}
+                            bind:value={branch}
+                        >
                             {#snippet leading()}<GitBranchIcon />{/snippet}
                         </Input>
                     {/if}
@@ -270,6 +316,11 @@
                     : t('services.deployment.accessDeployKeyHint')}
             </p>
         </div>
+        <Switch
+            label={t('services.deployment.autoDeploy')}
+            description={t('services.deployment.autoDeployHint')}
+            bind:checked={autoDeploy}
+        />
     </section>
 
     <section class="section" aria-labelledby="{sectionId}-run">

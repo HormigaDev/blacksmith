@@ -20,12 +20,14 @@ workspace = true
 [dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "macros", "matched-path", "query", "tokio", "tracing", "ws"] }
 dotenvy = "0.15"
+hmac = "0.13"
 rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
 rustix = { version = "1", default-features = false, features = ["fs", "process", "std", "system", "time"] }
 sd-notify = "0.4"
 secrecy = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.11"
 shared = { path = "../shared" }
 sysinfo = { version = "0.39", default-features = false, features = ["disk", "network", "system"] }
 thiserror = "2"
@@ -36,6 +38,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "env-filter", "fmt", "json", "std"] }
 
 [dev-dependencies]
+hmac = "0.13"
+sha2 = "0.11"
 http-body-util = "0.1"
 serde_json = "1"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }

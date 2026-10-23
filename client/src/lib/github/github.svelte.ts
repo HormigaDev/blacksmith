@@ -23,8 +23,6 @@ import {
     waitGitHubLogin,
 } from './api';
 
-export type RepositoriesStatus = 'idle' | 'loading' | 'ready' | 'error';
-
 class GitHubState {
     settings = $state<GitHubSettings | null>(null);
     /** `true` si se usa una App propia en lugar de la del proyecto. */
@@ -37,9 +35,10 @@ class GitHubState {
     error = $state<string | null>(null);
     /** Panel de conexión abierto (lo abre la cabecera o cualquier pantalla que necesite GitHub). */
     panelOpen = $state(false);
-    /** Repositorios accesibles; `null` hasta cargarlos (ver `repositoriesStatus`). */
+    /** Repositorios accesibles; `null` hasta cargarlos. */
     repositories = $state<GitHubRepository[] | null>(null);
-    repositoriesStatus = $state<RepositoriesStatus>('idle');
+    /** Por qué falló la última carga de repositorios. */
+    repositoriesError = $state<string | null>(null);
 
     async load(): Promise<void> {
         try {
@@ -47,7 +46,7 @@ class GitHubState {
             this.settings = status.settings;
             this.custom = status.custom;
             this.user = status.user;
-            if (this.user) void this.loadRepositories().catch(() => undefined);
+            if (this.user) void this.loadRepositories();
         } catch (error) {
             this.error = describeError(error);
         } finally {
@@ -75,7 +74,7 @@ class GitHubState {
     #signedOut(): void {
         this.user = null;
         this.repositories = null;
-        this.repositoriesStatus = 'idle';
+        this.repositoriesError = null;
     }
 
     /** Pide el código, abre GitHub en el navegador y espera la confirmación. */
@@ -88,7 +87,7 @@ class GitHubState {
             void openUrl(start.verificationUri).catch(() => undefined);
             this.user = await waitGitHubLogin();
             this.repositories = null;
-            void this.loadRepositories(true).catch(() => undefined);
+            void this.loadRepositories(true);
         } catch (error) {
             if (!(error instanceof TunnelError && error.code === 'GITHUB_LOGIN_CANCELLED')) {
                 this.error = describeError(error);
@@ -113,18 +112,19 @@ class GitHubState {
         if (this.settings) await openUrl(installUrl(this.settings.appSlug));
     }
 
-    async loadRepositories(force = false): Promise<GitHubRepository[]> {
-        if (this.repositories && !force) return this.repositories;
-        this.repositoriesStatus = 'loading';
+    async loadRepositories(force = false): Promise<void> {
+        if (this.repositories && !force) return;
+        const user = this.user;
+        this.repositoriesError = null;
         try {
-            this.repositories = await gitHubRepositories();
-            this.repositoriesStatus = 'ready';
+            const repositories = await gitHubRepositories();
+            // Si entretanto se desconectó (o cambió) la cuenta, la respuesta ya no es de nadie.
+            if (this.user === user) this.repositories = repositories;
         } catch (error) {
-            this.repositoriesStatus = 'error';
+            if (this.user !== user) return;
             if (error instanceof TunnelError && error.code === 'GITHUB_NOT_CONNECTED') this.#signedOut();
-            throw error;
+            else this.repositoriesError = describeError(error);
         }
-        return this.repositories;
     }
 }
 

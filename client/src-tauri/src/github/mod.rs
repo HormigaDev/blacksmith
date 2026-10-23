@@ -18,14 +18,14 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use tokio::sync::{Mutex, Notify};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use self::client::{GitHubClient, GitHubRepository, GitHubUser, Poll};
 use crate::{
     agent_http::{self, Method},
-    commands::AppState,
+    commands::{blocking, AppState},
     error::{CommandError, CommandResult},
-    ssh::host_keys::write_private_file,
+    files::write_private_file,
 };
 
 /// GitHub App del proyecto, compartida por todos los usuarios: el *Client ID* es público y el
@@ -79,9 +79,15 @@ impl GitHubState {
     /// La App propia, si se configuró una.
     fn custom(&self) -> CommandResult<Option<GitHubSettings>> {
         match std::fs::read(&self.settings_path) {
-            Ok(bytes) => Ok(serde_json::from_slice::<GitHubSettings>(&bytes)
-                .ok()
-                .filter(|settings| settings.client_id != DEFAULT_APP.0)),
+            Ok(bytes) => serde_json::from_slice::<GitHubSettings>(&bytes)
+                .map(|settings| {
+                    Some(settings).filter(|settings| settings.client_id != DEFAULT_APP.0)
+                })
+                // Corrupto: se dice, en vez de volver en silencio a la App del proyecto (el token
+                // guardado dejaría de corresponder y la cuenta aparecería desconectada).
+                .map_err(|error| {
+                    CommandError::internal("leyendo la configuración de GitHub", error)
+                }),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(CommandError::internal(
                 "leyendo la configuración de GitHub",
@@ -138,14 +144,6 @@ pub struct LoginStart {
     user_code: String,
     verification_uri: String,
     expires_in: u64,
-}
-
-async fn blocking<T: Send + 'static>(
-    task: impl FnOnce() -> CommandResult<T> + Send + 'static,
-) -> CommandResult<T> {
-    tokio::task::spawn_blocking(task)
-        .await
-        .map_err(|error| CommandError::internal("tarea de GitHub", error))?
 }
 
 /// Token de la App configurada, o `GitHubNotConnected`.
@@ -269,13 +267,15 @@ pub async fn github_share_with_server(
 ) -> CommandResult<shared::GitHubAccess> {
     let token = token(&state).await?;
     let user = GitHubClient::new()?.user(&token).await?;
-    let body = Zeroizing::new(
-        serde_json::to_string(&shared::SetGitHubAccess {
-            login: user.login,
-            token: token.to_string(),
-        })
-        .map_err(|error| CommandError::internal("preparando el acceso a GitHub", error))?,
-    );
+    let mut access = shared::SetGitHubAccess {
+        login: user.login,
+        token: token.to_string(),
+    };
+    let body = serde_json::to_string(&access).map(Zeroizing::new);
+    // La copia del token sale de `Zeroizing`: se borra en cuanto deja de hacer falta.
+    access.token.zeroize();
+    let body =
+        body.map_err(|error| CommandError::internal("preparando el acceso a GitHub", error))?;
     let addr = state.agent_addr(&server_id).await?;
     let response = agent_http::request(
         addr,
@@ -287,20 +287,10 @@ pub async fn github_share_with_server(
     )
     .await?;
     if response.status != 200 {
-        return Err(
-            match serde_json::from_str::<shared::ApiErrorBody>(&response.body) {
-                Ok(error) => CommandError::AgentRejected {
-                    status: response.status,
-                    code: error.code,
-                    message: error.message.into_owned(),
-                },
-                Err(_) => CommandError::AgentRejected {
-                    status: response.status,
-                    code: shared::ErrorCode::Unknown,
-                    message: format!("respuesta {} sin cuerpo de error", response.status),
-                },
-            },
-        );
+        return Err(CommandError::agent_rejected(
+            response.status,
+            response.body.as_bytes(),
+        ));
     }
     serde_json::from_str(&response.body)
         .map_err(|error| CommandError::internal("respuesta del agente inesperada", error))
@@ -357,7 +347,7 @@ pub async fn github_login_wait(state: State<'_, AppState>) -> CommandResult<GitH
             () = tokio::time::sleep(interval) => {}
         }
         if Instant::now() >= expires_at {
-            state.github.login.lock().await.take();
+            forget_login(&state, &cancel).await;
             return Err(CommandError::GitHubCodeExpired);
         }
         match client.poll_token(&client_id, &device_code).await {
@@ -365,17 +355,29 @@ pub async fn github_login_wait(state: State<'_, AppState>) -> CommandResult<GitH
             Ok(Poll::SlowDown(extra)) => interval += Duration::from_secs(extra.max(5)),
             Ok(Poll::Authorized(token)) => break token,
             Err(error) => {
-                state.github.login.lock().await.take();
+                forget_login(&state, &cancel).await;
                 return Err(error);
             }
         }
     };
-    state.github.login.lock().await.take();
+    forget_login(&state, &cancel).await;
 
     let user = client.user(&token).await?;
     let vault = Arc::clone(&state.vault);
     blocking(move || vault.put_value(TOKEN_ID, &StoredToken { token, client_id })).await?;
     Ok(user)
+}
+
+/// Olvida el inicio de sesión pendiente, si sigue siendo el de esta espera: entretanto pudo
+/// empezar otro, que no se toca.
+async fn forget_login(state: &AppState, cancel: &Arc<Notify>) {
+    let mut login = state.github.login.lock().await;
+    if login
+        .as_ref()
+        .is_some_and(|pending| Arc::ptr_eq(&pending.cancel, cancel))
+    {
+        login.take();
+    }
 }
 
 #[tauri::command]

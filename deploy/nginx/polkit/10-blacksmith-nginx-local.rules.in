@@ -13,7 +13,7 @@ polkit.addRule(function (action, subject) {
     var verb = action.lookup("verb");
     if (verb === "start" && typeof unit === "string"
         && (unit === "blacksmith-nginx.service"
-            || /^blacksmith-certbot@[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?\.service$/.test(unit))) {
+            || /^blacksmith-certbot@[a-z0-9](?:[a-z0-9.-]{0,226}[a-z0-9])?\.service$/.test(unit))) {
         return polkit.Result.YES;
     }
     return polkit.Result.NOT_HANDLED;

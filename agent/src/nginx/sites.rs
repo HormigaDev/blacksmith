@@ -15,7 +15,7 @@
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
 use shared::{Site, SiteConfig, SiteRoute, TlsStatus};
@@ -30,7 +30,7 @@ use crate::{
     },
     error::DisplayChain,
     services::{Service, ServiceSlug},
-    systemd::{Action, Systemctl, SystemctlError, UnitName},
+    systemd::{Action, Journalctl, Systemctl, SystemctlError, UnitName},
 };
 
 /// Unidad que valida (`nginx -t`) y recarga nginx (deploy/nginx/systemd/blacksmith-nginx.service).
@@ -38,6 +38,12 @@ const APPLY_UNIT: &str = "blacksmith-nginx.service";
 /// Algo más que su `TimeoutStartSec=` (60 s / 5 min): quien corta es systemd.
 const APPLY_TIMEOUT: Duration = Duration::from_secs(70);
 const CERTBOT_TIMEOUT: Duration = Duration::from_secs(6 * 60);
+/// `blacksmith-certbot@<dominio>.service` ≤ 255 caracteres.
+const MAX_PRIMARY_DOMAIN_LEN: usize = 255 - "blacksmith-certbot@.service".len();
+/// Unidades de certbot que polkit deja arrancar al agente. Debe coincidir literalmente con las dos
+/// reglas (servidor y modo local) y con [`MAX_PRIMARY_DOMAIN_LEN`]: lo comprueba un test.
+pub const CERTBOT_UNIT_PATTERN: &str =
+    r"^blacksmith-certbot@[a-z0-9](?:[a-z0-9.-]{0,226}[a-z0-9])?\.service$";
 const MAX_DOMAINS: usize = 20;
 
 #[derive(Debug, thiserror::Error)]
@@ -65,7 +71,8 @@ pub struct SiteManager {
     db: Database,
     /// Siempre el systemd del sistema: nginx y certbot lo son también en modo local.
     systemctl: Systemctl,
-    journalctl: PathBuf,
+    /// Del sistema, como `systemctl`: el motivo de un fallo de nginx o certbot.
+    journal: Journalctl,
     paths: Paths,
     /// Puerto del agente: ningún sitio puede publicarlo.
     agent_port: u16,
@@ -76,14 +83,14 @@ impl SiteManager {
     pub fn new(
         db: Database,
         systemctl: Systemctl,
-        journalctl: impl Into<PathBuf>,
+        journal: Journalctl,
         paths: Paths,
         agent_port: u16,
     ) -> Self {
         Self {
             db,
             systemctl,
-            journalctl: journalctl.into(),
+            journal,
             paths,
             agent_port,
             lock: Arc::new(Mutex::new(())),
@@ -196,8 +203,13 @@ impl SiteManager {
     /// Quita el sitio de nginx (el servicio sigue registrado).
     pub async fn remove(&self, slug: &ServiceSlug) -> Result<(), SiteError> {
         let service = self.registered(slug).await?;
+        let site = self.db.site(service.id).await?;
         self.unpublish(slug).await?;
         self.db.delete_site(service.id).await?;
+        // Los datos de certbot de ese certificado ya no los pedirá nadie.
+        if let Some(primary) = site.as_ref().and_then(|site| site.config.domains.first()) {
+            let _ = remove(&self.paths.nginx_certs_dir.join(format!("{primary}.env"))).await;
+        }
         tracing::info!(name = %slug, "sitio retirado de nginx");
         Ok(())
     }
@@ -236,18 +248,24 @@ impl SiteManager {
         config: &SiteConfig,
         tls: bool,
     ) -> Result<Undo, SiteError> {
-        let vars = SiteVars {
-            service: service.slug.to_string(),
-            template: config.template,
-            domains: config.domains.clone(),
-            upstream: config.port.map(|port| format!("127.0.0.1:{port}")),
-            root: config.template.serves_files().then(|| {
+        let root = config
+            .template
+            .serves_files()
+            .then(|| {
                 self.paths
                     .app_dir(&service.slug)
                     .join("public/current")
                     .display()
                     .to_string()
-            }),
+            })
+            .map(safe_root)
+            .transpose()?;
+        let vars = SiteVars {
+            service: service.slug.to_string(),
+            template: config.template,
+            domains: config.domains.clone(),
+            upstream: config.port.map(|port| format!("127.0.0.1:{port}")),
+            root,
             tls,
             routes: config.routes.clone(),
         };
@@ -289,7 +307,7 @@ impl SiteManager {
     /// `nginx -t` y recarga, en la unidad privilegiada.
     async fn apply(&self) -> Result<(), SiteError> {
         let unit = UnitName::from_validated(APPLY_UNIT.to_owned());
-        let since = now();
+        let since = crate::unix_now();
         match self
             .systemctl
             .run_with_timeout(Action::Start, &unit, APPLY_TIMEOUT)
@@ -297,7 +315,7 @@ impl SiteManager {
         {
             Ok(_) => Ok(()),
             Err(SystemctlError::JobFailed { .. }) => {
-                let detail = self.journal_tail(APPLY_UNIT, since).await;
+                let detail = self.journal.tail(&unit, since).await;
                 Err(SiteError::Rejected(if detail.is_empty() {
                     format!("nginx -t falló (journalctl -u {APPLY_UNIT})")
                 } else {
@@ -318,19 +336,20 @@ impl SiteManager {
     async fn issue(self, service: Service, config: SiteConfig) {
         let slug = service.slug.clone();
         let outcome = self.certbot(&config).await;
-        let (tls, detail) = match outcome {
-            Ok(()) => {
-                let _guard = self.lock.lock().await;
-                // La configuración pudo cambiar mientras tanto: se usa la guardada.
-                let current = match self.db.site(service.id).await {
-                    Ok(Some(site)) if site.config.domains == config.domains => site.config,
-                    _ => return,
-                };
-                match self.write_and_apply(&service, &current, true).await {
-                    Ok(_) => (TlsStatus::Active, None),
-                    Err(error) => (TlsStatus::Failed, Some(DisplayChain(&error).to_string())),
-                }
+        let _guard = self.lock.lock().await;
+        // La configuración pudo cambiar mientras certbot trabajaba (otros dominios, o HTTPS
+        // desactivado): entonces este resultado ya no es de nadie y no se aplica ni se guarda.
+        let current = match self.db.site(service.id).await {
+            Ok(Some(site)) if site.config.https && site.config.domains == config.domains => {
+                site.config
             }
+            _ => return,
+        };
+        let (tls, detail) = match outcome {
+            Ok(()) => match self.write_and_apply(&service, &current, true).await {
+                Ok(_) => (TlsStatus::Active, None),
+                Err(error) => (TlsStatus::Failed, Some(DisplayChain(&error).to_string())),
+            },
             Err(detail) => (TlsStatus::Failed, Some(detail)),
         };
         tracing::info!(name = %slug, ?tls, detail = detail.as_deref(), "certificado del sitio");
@@ -341,17 +360,14 @@ impl SiteManager {
 
     async fn certbot(&self, config: &SiteConfig) -> Result<(), String> {
         let primary = config.domains.first().ok_or("sin dominios")?;
-        let mut args: Vec<String> = config
-            .domains
-            .iter()
-            .map(|domain| format!("-d {domain}"))
-            .collect();
-        args.push(match &config.email {
-            Some(email) => format!("--email {email}"),
-            None => "--register-unsafely-without-email".to_owned(),
-        });
-        // Valores ya validados: solo dominios y un correo, sin espacios ni comillas.
-        let env = format!("BLACKSMITH_CERTBOT_ARGS={}\n", args.join(" "));
+        // Solo datos: los argumentos de certbot los construye `deploy/nginx/certbot.sh`, que corre
+        // como root y vuelve a validar cada valor (este archivo lo escribe un usuario sin
+        // privilegios). Valores ya validados: sin espacios, comillas ni saltos de línea.
+        let env = format!(
+            "BLACKSMITH_DOMAINS={}\nBLACKSMITH_EMAIL={}\n",
+            config.domains.join(","),
+            config.email.as_deref().unwrap_or_default()
+        );
         write(
             &self.paths.nginx_certs_dir.join(format!("{primary}.env")),
             env.into_bytes(),
@@ -360,7 +376,7 @@ impl SiteManager {
         .map_err(|error| DisplayChain(&error).to_string())?;
         let unit_name = format!("blacksmith-certbot@{primary}.service");
         let unit = UnitName::new(&unit_name).map_err(|error| error.to_string())?;
-        let since = now();
+        let since = crate::unix_now();
         match self
             .systemctl
             .run_with_timeout(Action::Start, &unit, CERTBOT_TIMEOUT)
@@ -368,7 +384,7 @@ impl SiteManager {
         {
             Ok(_) => Ok(()),
             Err(SystemctlError::JobFailed { .. }) => {
-                let detail = self.journal_tail(&unit_name, since).await;
+                let detail = self.journal.tail(&unit, since).await;
                 Err(if detail.is_empty() {
                     format!("certbot falló (journalctl -u {unit_name})")
                 } else {
@@ -377,38 +393,6 @@ impl SiteManager {
             }
             Err(error) => Err(DisplayChain(&error).to_string()),
         }
-    }
-
-    /// Últimas líneas del journal de una unidad desde `since`: el motivo de un fallo.
-    async fn journal_tail(&self, unit: &str, since: i64) -> String {
-        let output = tokio::process::Command::new(&self.journalctl)
-            .env_clear()
-            .env("LC_ALL", "C")
-            .args([
-                "--system",
-                "--no-pager",
-                "--quiet",
-                "--output=cat",
-                "--lines=40",
-            ])
-            .arg(format!("--since=@{since}"))
-            .arg(format!("--unit={unit}"))
-            .kill_on_drop(true)
-            .output();
-        let Ok(Ok(output)) = tokio::time::timeout(Duration::from_secs(5), output).await else {
-            return String::new();
-        };
-        let text = String::from_utf8_lossy(&output.stdout);
-        let lines: Vec<&str> = text
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .collect();
-        let tail = lines
-            .get(lines.len().saturating_sub(12)..)
-            .unwrap_or_default()
-            .join("\n");
-        tail.chars().take(2000).collect()
     }
 }
 
@@ -455,14 +439,6 @@ async fn remove(path: &Path) -> Result<(), SiteError> {
         .map_err(DbError::from)??)
 }
 
-fn now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX)
-        })
-}
-
 /// Valida y normaliza la configuración. Todo lo que pasa de aquí acaba en la configuración de
 /// nginx o en los argumentos de certbot, así que solo se aceptan valores con forma conocida.
 pub fn validate(
@@ -492,6 +468,15 @@ pub fn validate(
     if domains.len() > MAX_DOMAINS {
         return Err(SiteError::Invalid(format!(
             "como mucho {MAX_DOMAINS} dominios"
+        )));
+    }
+    // El principal da nombre a la unidad de certbot, que no puede pasar de 255 caracteres.
+    if domains
+        .first()
+        .is_some_and(|primary| primary.len() > MAX_PRIMARY_DOMAIN_LEN)
+    {
+        return Err(SiteError::Invalid(format!(
+            "el dominio principal no puede pasar de {MAX_PRIMARY_DOMAIN_LEN} caracteres"
         )));
     }
     if config.template.serves_files() && !publishes {
@@ -619,11 +604,29 @@ fn publicly_resolvable(domain: &str) -> bool {
 }
 
 /// Dirección sencilla y sin nada que el shell o certbot interpreten.
+/// `root {{root}};` va sin comillas en las plantillas: en modo local la ruta sale de `$HOME`, y un
+/// espacio o un `;` en ella rompería la configuración o le añadiría directivas.
+fn safe_root(root: String) -> Result<String, SiteError> {
+    if root
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'_' | b'-'))
+    {
+        Ok(root)
+    } else {
+        Err(SiteError::Invalid(format!(
+            "la carpeta pública ({root}) tiene caracteres que nginx no admite sin comillas: \
+             use un directorio personal sin espacios ni símbolos"
+        )))
+    }
+}
+
 fn valid_email(email: &str) -> bool {
     let Some((user, host)) = email.split_once('@') else {
         return false;
     };
     (1..=64).contains(&user.len())
+        // Con un guion delante, certbot lo leería como una opción.
+        && !user.starts_with('-')
         && user.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'%' | b'+' | b'-')
         })
@@ -636,6 +639,29 @@ mod tests {
     use shared::SiteTemplate;
 
     use super::*;
+
+    #[test]
+    fn las_reglas_de_polkit_usan_el_mismo_patron_de_certbot() {
+        for rule in [
+            include_str!("../../../deploy/polkit/10-blacksmith.rules"),
+            include_str!("../../../deploy/nginx/polkit/10-blacksmith-nginx-local.rules.in"),
+        ] {
+            assert!(rule.contains(&format!("/{CERTBOT_UNIT_PATTERN}/")));
+        }
+        // Un carácter, hasta 226 y otro: el largo máximo del dominio principal.
+        assert_eq!(1 + 226 + 1, MAX_PRIMARY_DOMAIN_LEN);
+    }
+
+    #[test]
+    fn carpeta_publica_sin_caracteres_peligrosos() {
+        assert!(safe_root("/var/lib/blacksmith-apps/web/public/current".into()).is_ok());
+        for root in [
+            "/home/ana maria/.local/state/blacksmith-apps/web/public/current",
+            "/home/x;include /etc/shadow/public/current",
+        ] {
+            assert!(safe_root(root.into()).is_err(), "{root}");
+        }
+    }
 
     fn config(
         template: SiteTemplate,

@@ -32,6 +32,7 @@
 
     const resources = $derived(status?.resources ?? null);
     const host = $derived(status?.host ?? null);
+    // Los mismos estados en los que el agente mide el consumo (services::status).
     const running = $derived(status !== null && ['active', 'reloading', 'deactivating'].includes(status.activeState));
     const unknown = t('services.dashboard.unknown');
 

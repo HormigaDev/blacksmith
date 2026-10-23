@@ -2,7 +2,9 @@
 # le deja `start` de esta unidad) tras escribir el sitio de un servicio; si `nginx -t` falla, la
 # unidad falla, nginx sigue con la configuración anterior y el agente restaura el sitio.
 #
-# Es lo único que corre como root por cuenta del agente: dos órdenes fijas, sin argumentos suyos.
+# Es lo único que corre como root por cuenta del agente: órdenes fijas, sin argumentos suyos. Los
+# sitios los escribe el agente (sin privilegios) y el maestro de nginx los carga como root, así que
+# antes de validarlos check-sites.sh rechaza cualquier ruta o módulo que no sea de un sitio normal.
 
 [Unit]
 Description=Blacksmith: aplicar la configuración de nginx
@@ -10,6 +12,7 @@ After=nginx.service
 
 [Service]
 Type=oneshot
+ExecStart=/usr/local/lib/blacksmith/check-sites.sh @SITES_DIR@ @APPS_ROOT@
 ExecStart=/usr/sbin/nginx -t -q
 ExecStart=/usr/bin/systemctl reload-or-restart nginx.service
 TimeoutStartSec=60

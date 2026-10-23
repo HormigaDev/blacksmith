@@ -21,6 +21,7 @@
 
     $effect(() => {
         if (!server || !connected) return;
+        loadError = null;
         server.loadGlobal().catch((error: unknown) => (loadError = describeError(error)));
     });
 </script>

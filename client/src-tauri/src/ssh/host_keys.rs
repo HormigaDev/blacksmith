@@ -12,11 +12,13 @@
 use std::{
     collections::BTreeMap,
     fs,
-    io::Write,
-    path::{Path, PathBuf},
+    path::PathBuf,
+    sync::{Arc, Mutex},
 };
 
-use russh::keys::{check_known_hosts_path, HashAlg, PublicKey};
+use crate::files::write_private_file;
+
+use russh::keys::{known_hosts::known_host_keys_path, HashAlg, PublicKey};
 use serde::{Deserialize, Serialize};
 
 use super::{key::algorithm_name, target::SshTarget};
@@ -63,6 +65,9 @@ pub struct HostKeyStore {
     path: PathBuf,
     /// `~/.ssh/known_hosts`, si existe un directorio personal.
     openssh_known_hosts: Option<PathBuf>,
+    /// Confirmar y olvidar leen, cambian y escriben el registro: sin esto, dos a la vez perderían
+    /// uno de los cambios.
+    lock: Arc<Mutex<()>>,
 }
 
 impl HostKeyStore {
@@ -70,7 +75,17 @@ impl HostKeyStore {
         Self {
             path,
             openssh_known_hosts,
+            lock: Arc::default(),
         }
+    }
+
+    fn guard(&self) -> Result<std::sync::MutexGuard<'_, ()>, CommandError> {
+        self.lock.lock().map_err(|_| {
+            CommandError::internal(
+                "registro de llaves de servidor",
+                "bloqueo envenenado por un pánico",
+            )
+        })
     }
 
     pub fn verify(&self, target: &SshTarget, key: &PublicKey) -> Result<Verdict, CommandError> {
@@ -81,13 +96,20 @@ impl HostKeyStore {
             .as_ref()
             .filter(|path| path.is_file())
         {
-            match check_known_hosts_path(&target.host, target.port, key, known_hosts) {
-                Ok(true) => return Ok(Verdict::Trusted),
-                Err(russh::keys::Error::KeyChanged { .. }) => {
-                    return Ok(Verdict::Changed(presented))
+            // Un host puede tener varias llaves (una por algoritmo): basta con que coincida una. Si
+            // tiene alguna y ninguna coincide, también de otro algoritmo, es un cambio: así nadie
+            // fuerza al cliente a aceptar otro tipo de llave como si el servidor fuera nuevo. Un
+            // `known_hosts` ilegible se ignora y decide el registro propio.
+            if let Ok(recorded) = known_host_keys_path(&target.host, target.port, known_hosts) {
+                if recorded
+                    .iter()
+                    .any(|(_, recorded)| recorded.key_data() == key.key_data())
+                {
+                    return Ok(Verdict::Trusted);
                 }
-                // Sin entrada para este host o archivo ilegible: se decide con el registro propio.
-                Ok(false) | Err(_) => {}
+                if !recorded.is_empty() {
+                    return Ok(Verdict::Changed(presented));
+                }
             }
         }
 
@@ -98,8 +120,8 @@ impl HostKeyStore {
         })
     }
 
-    /// Registra la llave que el usuario confirmó.
     pub fn trust(&self, target: &SshTarget, key: &PresentedKey) -> Result<(), CommandError> {
+        let _guard = self.guard()?;
         let mut store = self.load()?;
         store.hosts.insert(target.host_port(), key.openssh.clone());
         self.save(&store)
@@ -108,6 +130,7 @@ impl HostKeyStore {
     /// Olvida la llave registrada (p. ej. tras reinstalar el servidor). Acción destructiva: la
     /// interfaz la confirma antes.
     pub fn forget(&self, target: &SshTarget) -> Result<bool, CommandError> {
+        let _guard = self.guard()?;
         let mut store = self.load()?;
         let removed = store.hosts.remove(&target.host_port()).is_some();
         if removed {
@@ -150,33 +173,12 @@ fn same_key(a: &str, b: &str) -> bool {
     head(a).eq(head(b))
 }
 
-/// Escritura atómica (temporal + renombrado) con permisos `0600` en Unix.
-pub fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension("tmp");
-    {
-        let mut options = fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&tmp)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-    }
-    fs::rename(&tmp, path)
-}
-
 #[cfg(test)]
 mod tests {
     use russh::keys::decode_secret_key;
 
     use super::*;
-    use crate::ssh::key::fixtures::{HOST_ED25519, HOST_IMPOSTOR_ED25519};
+    use crate::ssh::key::fixtures::{CLIENT_ECDSA, HOST_ED25519, HOST_IMPOSTOR_ED25519};
 
     /// Como la presenta un servidor real: sin comentario (russh compara también el comentario).
     fn public(pem: &str) -> PublicKey {
@@ -262,6 +264,28 @@ mod tests {
             store
                 .verify(&target(), &public(HOST_IMPOSTOR_ED25519))
                 .unwrap(),
+            Verdict::Changed(_)
+        ));
+    }
+
+    /// `known_hosts` registra otra llave de otro algoritmo: no es un servidor nuevo (TOFU), sino
+    /// un cambio que se bloquea.
+    #[test]
+    fn otro_algoritmo_en_known_hosts_es_un_cambio() {
+        let dir = tempfile::tempdir().unwrap();
+        let known_hosts = dir.path().join("known_hosts");
+        let recorded = public(CLIENT_ECDSA);
+        fs::write(
+            &known_hosts,
+            format!(
+                "[vps.example.com]:2222 {}\n",
+                recorded.to_openssh().unwrap()
+            ),
+        )
+        .unwrap();
+        let store = HostKeyStore::new(dir.path().join("app.json"), Some(known_hosts));
+        assert!(matches!(
+            store.verify(&target(), &public(HOST_ED25519)).unwrap(),
             Verdict::Changed(_)
         ));
     }

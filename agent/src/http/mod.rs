@@ -129,8 +129,9 @@ pub fn router(state: AppState) -> Router {
 
     Router::new()
         .nest("/api/v1", admin)
-        // Los webhooks (`/api/webhooks/*`) van aquí, fuera de `tunnel_only`: son la única
-        // superficie que expone Nginx y se autentican con la firma HMAC de GitHub.
+        // Fuera de `tunnel_only`: es la única superficie que expone Nginx y se autentica con la
+        // firma HMAC de GitHub.
+        .route("/api/webhooks/github", post(routes::webhooks::github))
         .fallback(not_found)
         .method_not_allowed_fallback(method_not_allowed)
         .layer(stack)

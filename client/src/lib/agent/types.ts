@@ -82,6 +82,8 @@ export interface ServiceDeployment {
     startCommand: string;
     /** Carpeta del repositorio que se publica para nginx (sitios estáticos), p. ej. `dist`. */
     publishDir: string | null;
+    /** Se despliega solo al recibir un push a su rama (webhook de GitHub). */
+    autoDeploy: boolean;
     updatedAt: number | null;
 }
 
@@ -92,6 +94,7 @@ export interface UpdateDeployment {
     setupCommands: string[];
     startCommand: string;
     publishDir: string | null;
+    autoDeploy: boolean;
 }
 
 /** `shared::SiteTemplate`: tipo de proyecto (plantilla de nginx). */
@@ -182,6 +185,11 @@ export const ACTIVE_STATES = [
     'refreshing',
 ] as const;
 
+/** En marcha o arrancando: para los controles (iniciar/parar) y los avisos de despliegue. */
+export function isRunning(state: ServiceStatus['activeState']): boolean {
+    return state === 'active' || state === 'reloading' || state === 'activating' || state === 'refreshing';
+}
+
 /** Acciones de ciclo de vida (`POST /services/{name}/{acción}`). */
 export type ServiceAction = 'start' | 'stop' | 'restart';
 
@@ -193,7 +201,6 @@ export interface ServiceStatus {
     activeState: (typeof ACTIVE_STATES)[number];
     subState: string;
     pid: number | null;
-    metrics: { rssBytes: number; rssMb: number; cpuPercent: number } | null;
     /** Hay una versión activa; sin ella el servicio no puede arrancar. */
     deployed: boolean;
     /** Versión activa y la anterior (a la que vuelve un rollback). */
@@ -392,7 +399,10 @@ export function parseGlobalEnvironment(data: unknown): GlobalEnvironment {
 export function parseServiceDeployment(data: unknown): ServiceDeployment {
     if (!isRecord(data)) fail('despliegue');
     const { name, repository, access, workingDirectory, setupCommands, startCommand, publishDir, updatedAt } = data;
+    // Un agente anterior no lo envía: era siempre manual.
+    const autoDeploy = data.autoDeploy ?? false;
     if (
+        typeof autoDeploy !== 'boolean' ||
         (access !== 'account' && access !== 'deployKey') ||
         !(publishDir === null || typeof publishDir === 'string') ||
         typeof name !== 'string' ||
@@ -416,12 +426,22 @@ export function parseServiceDeployment(data: unknown): ServiceDeployment {
         }
         repo = { owner: repository.owner, name: repository.name, branch: repository.branch };
     }
-    return { name, repository: repo, access, workingDirectory, setupCommands, startCommand, publishDir, updatedAt };
+    return {
+        name,
+        repository: repo,
+        access,
+        workingDirectory,
+        setupCommands,
+        startCommand,
+        publishDir,
+        autoDeploy,
+        updatedAt,
+    };
 }
 
 export function parseServiceStatus(data: unknown): ServiceStatus {
     if (!isRecord(data)) fail('estado');
-    const { name, unit, loadState, activeState, subState, pid, metrics, deployed, release, previousRelease } = data;
+    const { name, unit, loadState, activeState, subState, pid, deployed, release, previousRelease } = data;
     const load = LOAD_STATES.find((state) => state === loadState);
     const active = ACTIVE_STATES.find((state) => state === activeState);
     if (
@@ -437,18 +457,6 @@ export function parseServiceStatus(data: unknown): ServiceStatus {
     ) {
         fail('estado');
     }
-    let parsedMetrics: ServiceStatus['metrics'] = null;
-    if (metrics !== null) {
-        if (
-            !isRecord(metrics) ||
-            typeof metrics.rssBytes !== 'number' ||
-            typeof metrics.rssMb !== 'number' ||
-            typeof metrics.cpuPercent !== 'number'
-        ) {
-            fail('métricas');
-        }
-        parsedMetrics = { rssBytes: metrics.rssBytes, rssMb: metrics.rssMb, cpuPercent: metrics.cpuPercent };
-    }
     return {
         name,
         unit,
@@ -456,7 +464,6 @@ export function parseServiceStatus(data: unknown): ServiceStatus {
         activeState: active,
         subState,
         pid,
-        metrics: parsedMetrics,
         deployed,
         release,
         previousRelease,

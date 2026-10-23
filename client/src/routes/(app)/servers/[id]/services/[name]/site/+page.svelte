@@ -11,6 +11,7 @@
     import { Panel, Spinner } from '$lib/components/ui';
     import { describeError } from '$lib/http';
     import { t } from '$lib/i18n';
+    import { AGENT_PORT } from '$lib/ssh';
     import { servers, serviceStore } from '$lib/stores';
     import { toast } from '$lib/toast';
 
@@ -19,9 +20,14 @@
     const name = $derived(page.params.name ?? '');
     const service = $derived(serverId ? serviceStore.service(serverId, name) : null);
     let loadError = $state<string | null>(null);
+    // El formulario se vuelve a montar solo al guardar o quitar el sitio (para mostrar lo que
+    // quedó). No con cada cambio del sitio: mientras llega el certificado se refresca solo y se
+    // perdería lo que el usuario está escribiendo.
+    let saves = $state(0);
 
     $effect(() => {
         if (service && service.site === undefined) {
+            loadError = null;
             service.loadSite().catch((error: unknown) => (loadError = describeError(error)));
         }
     });
@@ -34,22 +40,26 @@
         <Spinner label={t('common.loading')} />
     {:else}
         <Panel title={t('services.site.title')}>
-            {#key service.site?.updatedAt ?? 0}
+            {#key saves}
                 <SiteForm
                     site={service.site}
                     publishDir={service.deployment.publishDir}
-                    agentPort={entry?.tunnel?.remotePort ?? entry?.profile.port}
+                    agentPort={entry?.tunnel?.remotePort ?? AGENT_PORT}
                     onSave={async (config) => {
                         await service.saveSite(config);
+                        saves++;
                         toast.success(t('services.site.saved'));
                     }}
                     onRemove={async () => {
                         try {
                             await service.removeSite();
-                            toast.success(t('services.site.removed'));
                         } catch (error) {
                             toast.error(describeError(error));
+                            // El diálogo de confirmación sigue abierto: no se quitó nada.
+                            throw error;
                         }
+                        saves++;
+                        toast.success(t('services.site.removed'));
                     }}
                     onRetryCertificate={() => service.retryCertificate()}
                     onOpenSite={(url) => void openUrl(url)}

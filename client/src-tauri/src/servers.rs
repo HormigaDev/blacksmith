@@ -10,10 +10,7 @@ use std::{fs, path::PathBuf, sync::Mutex};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    error::CommandError,
-    ssh::{host_keys::write_private_file, target::SshTarget},
-};
+use crate::{error::CommandError, files::write_private_file, ssh::target::SshTarget};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

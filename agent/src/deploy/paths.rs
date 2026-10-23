@@ -7,12 +7,17 @@
 //! | `%S` | `/var/lib` | `$XDG_STATE_HOME` (`~/.local/state`) |
 //! | `%E` | `/etc` | `$XDG_CONFIG_HOME` (`~/.config`) |
 //! | Variables | `%E/blacksmith/env` | |
-//! | Versiones desplegadas | `%S/blacksmith/<nombre>` | |
-//! | Especificación y token de cada despliegue | `%S/blacksmith/deployments/<nombre>` | |
+//! | Versiones desplegadas (usuario de los servicios) | `%S/blacksmith-apps/<nombre>` | |
+//! | Clon de cada despliegue (usuario del clon) | `%S/blacksmith-fetch/<nombre>` | |
+//! | Especificación y credenciales de cada despliegue | `%S/blacksmith/deployments/<nombre>` | |
 //! | Acceso a GitHub (token) | `%S/blacksmith/github.json` | |
 //! | Sitios de nginx generados | `%S/blacksmith/nginx/sites` | |
 //! | Argumentos de certbot | `%S/blacksmith/nginx/certs` | |
 //! | Plantillas de nginx (editables) | `%E/blacksmith/nginx/templates` | |
+//!
+//! Los servicios viven fuera de `%S/blacksmith` (los datos del agente): ningún nombre de servicio
+//! puede coincidir con un directorio del agente, y nginx atraviesa `%S/blacksmith-apps` hasta
+//! `public/` sin poder entrar en `%S/blacksmith`.
 
 use std::path::{Path, PathBuf};
 
@@ -24,7 +29,8 @@ pub struct Paths {
     pub env_dir: PathBuf,
     /// Directorios de trabajo: `<apps>/<nombre>` con `releases/` y el enlace `app`.
     pub apps_dir: PathBuf,
-    /// Lo que el agente prepara para cada despliegue: `spec.json` y `github-token`.
+    /// Lo que el agente prepara para cada despliegue: `spec.json`, `github-token`, `deploy-key` y
+    /// la llave de despliegue del servicio (`key/`).
     pub deployments_dir: PathBuf,
     /// Cuenta y token de GitHub del servidor (ver `crate::github`).
     pub github_file: PathBuf,
@@ -65,7 +71,7 @@ impl Paths {
     pub fn rooted(state: &Path, config: &Path, units_dir: Option<PathBuf>) -> Self {
         Self {
             env_dir: config.join("blacksmith/env"),
-            apps_dir: state.join("blacksmith"),
+            apps_dir: state.join("blacksmith-apps"),
             deployments_dir: state.join("blacksmith/deployments"),
             github_file: state.join("blacksmith/github.json"),
             nginx_sites_dir: state.join("blacksmith/nginx/sites"),
@@ -92,7 +98,7 @@ mod tests {
     fn rutas_del_sistema() {
         let paths = Paths::for_scope(Scope::System).unwrap();
         assert_eq!(paths.env_dir, Path::new("/etc/blacksmith/env"));
-        assert_eq!(paths.apps_dir, Path::new("/var/lib/blacksmith"));
+        assert_eq!(paths.apps_dir, Path::new("/var/lib/blacksmith-apps"));
         assert_eq!(
             paths.deployments_dir,
             Path::new("/var/lib/blacksmith/deployments")
@@ -111,7 +117,10 @@ mod tests {
         );
         assert_eq!(paths.units_dir, None);
         let slug = ServiceSlug::new("api").unwrap();
-        assert_eq!(paths.app_dir(&slug), Path::new("/var/lib/blacksmith/api"));
+        assert_eq!(
+            paths.app_dir(&slug),
+            Path::new("/var/lib/blacksmith-apps/api")
+        );
     }
 
     #[test]

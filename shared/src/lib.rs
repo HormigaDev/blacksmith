@@ -25,8 +25,8 @@ pub use host::{
 pub use limits::{Priority, ResourceLimits, ServiceLimits};
 pub use logs::{LOG_BACKLOG_LINES, LogEndReason, LogEntry, LogEvent};
 pub use services::{
-    ActiveState, HostCapacity, LoadState, ProcessMetrics, RegisterService, SERVICES_PATH,
-    ServiceActionReport, ServiceOutcome, ServiceResources, ServiceStatusReport, ServiceSummary,
+    ActiveState, HostCapacity, LoadState, RegisterService, SERVICES_PATH, ServiceActionReport,
+    ServiceOutcome, ServiceResources, ServiceStatusReport, ServiceSummary,
 };
 pub use site::{Site, SiteConfig, SiteRoute, SiteTemplate, TlsStatus};
 

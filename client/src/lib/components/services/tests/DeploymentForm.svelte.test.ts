@@ -15,6 +15,7 @@ const EMPTY: ServiceDeployment = {
     setupCommands: [],
     startCommand: '',
     publishDir: null,
+    autoDeploy: true,
     updatedAt: null,
 };
 
@@ -73,6 +74,7 @@ describe('DeploymentForm', () => {
             setupCommands: ['npm ci', 'npm run build'],
             startCommand: 'node dist/server.js',
             publishDir: null,
+            autoDeploy: true,
         });
     });
 
@@ -115,6 +117,7 @@ describe('DeploymentForm', () => {
             setupCommands: [],
             startCommand: 'x',
             publishDir: null,
+            autoDeploy: true,
         });
     });
 

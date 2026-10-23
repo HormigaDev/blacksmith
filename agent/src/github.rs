@@ -74,7 +74,7 @@ impl GitHubStore {
         let stored = Stored {
             login: access.login,
             token: access.token,
-            saved_at: now(),
+            saved_at: crate::unix_now(),
         };
         let json = serde_json::to_vec(&stored)
             .map_err(|error| GitHubAccessError::Corrupt(error.to_string()))?;
@@ -108,13 +108,20 @@ impl GitHubStore {
 }
 
 fn validate_login(login: &str) -> Result<(), GitHubAccessError> {
-    let valid = (1..=LOGIN_MAX_LEN).contains(&login.len())
+    valid_login(login)
+        .then_some(())
+        .ok_or(GitHubAccessError::InvalidLogin)
+}
+
+/// Usuario u organización de GitHub: letras, dígitos y guiones, sin guion en los extremos, hasta
+/// 39 caracteres (la regla de GitHub).
+pub fn valid_login(login: &str) -> bool {
+    (1..=LOGIN_MAX_LEN).contains(&login.len())
         && login
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
         && !login.starts_with('-')
-        && !login.ends_with('-');
-    valid.then_some(()).ok_or(GitHubAccessError::InvalidLogin)
+        && !login.ends_with('-')
 }
 
 /// Solo caracteres de token: lo que llega al helper de git no puede llevar saltos de línea ni
@@ -125,14 +132,6 @@ fn validate_token(token: &str) -> Result<(), GitHubAccessError> {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
     valid.then_some(()).ok_or(GitHubAccessError::InvalidToken)
-}
-
-fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX)
-        })
 }
 
 #[cfg(test)]

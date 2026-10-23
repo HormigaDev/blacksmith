@@ -22,9 +22,6 @@ fn embedded(template: SiteTemplate) -> &'static str {
     }
 }
 
-/// Webroot de los desafíos de Let's Encrypt (lo crea `deploy/nginx/install.sh`).
-pub const ACME_ROOT: &str = "/var/lib/blacksmith-acme";
-
 #[derive(Debug, thiserror::Error)]
 pub enum TemplateError {
     #[error("no se pudo leer la plantilla {path}: {source}")]

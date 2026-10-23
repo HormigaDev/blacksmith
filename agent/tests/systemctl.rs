@@ -60,10 +60,13 @@ fn unit(name: &str) -> UnitName {
 async fn exito_y_unidad_inexistente() {
     let systemctl = systemctl(Duration::from_secs(5));
     assert_eq!(
-        systemctl.restart(&unit("ok")).await.unwrap(),
+        systemctl.run(Action::Restart, &unit("ok")).await.unwrap(),
         Outcome::Restarted
     );
-    let error = systemctl.start(&unit("otra")).await.unwrap_err();
+    let error = systemctl
+        .run(Action::Start, &unit("otra"))
+        .await
+        .unwrap_err();
     assert!(
         matches!(error, SystemctlError::UnitNotFound { .. }),
         "{error:?}"
@@ -73,7 +76,7 @@ async fn exito_y_unidad_inexistente() {
 #[tokio::test]
 async fn argumentos_separados_y_entorno_vacio() {
     let error = systemctl(Duration::from_secs(5))
-        .stop(&unit("eco"))
+        .run(Action::Stop, &unit("eco"))
         .await
         .unwrap_err();
     let SystemctlError::Failed { detail, status, .. } = error else {
@@ -101,7 +104,7 @@ async fn argumentos_separados_y_entorno_vacio() {
 async fn el_tiempo_maximo_mata_el_proceso() {
     let start = Instant::now();
     let error = systemctl(Duration::from_millis(200))
-        .start(&unit("lento"))
+        .run(Action::Start, &unit("lento"))
         .await
         .unwrap_err();
     assert!(
@@ -131,7 +134,7 @@ async fn el_tiempo_maximo_mata_el_proceso() {
 #[tokio::test]
 async fn salida_de_error_enorme_acotada_sin_bloquear() {
     let error = systemctl(Duration::from_secs(10))
-        .start(&unit("ruidoso"))
+        .run(Action::Start, &unit("ruidoso"))
         .await
         .unwrap_err();
     let SystemctlError::Failed { detail, .. } = error else {
@@ -140,25 +143,20 @@ async fn salida_de_error_enorme_acotada_sin_bloquear() {
     assert!(detail.len() <= 4 * 1024, "{}", detail.len());
 }
 
+/// Una consulta de un solo valor (`show -p … --value`): el número, o nada si systemd no lo tiene.
 #[tokio::test]
-async fn pid_principal() {
+async fn consulta_de_un_valor() {
     let systemctl = systemctl(Duration::from_secs(5));
-    let pid = systemctl.main_pid(&unit("pid")).await.unwrap().unwrap();
-    assert_eq!(pid.as_raw_nonzero().get(), 4242);
-    // Detenido (y también inexistente): systemd responde 0.
-    assert_eq!(systemctl.main_pid(&unit("detenido")).await.unwrap(), None);
-
-    let error = systemctl.main_pid(&unit("basura")).await.unwrap_err();
-    assert!(
-        matches!(
-            error,
-            SystemctlError::UnexpectedOutput { operation: Operation::ShowMainPid, ref output, .. }
-                if output == "MainPID=12\n"
-        ),
-        "{error:?}"
+    assert_eq!(
+        systemctl.cpu_usage_nsec(&unit("pid")).await.unwrap(),
+        Some(4242)
+    );
+    assert_eq!(
+        systemctl.cpu_usage_nsec(&unit("basura")).await.unwrap(),
+        None
     );
     // El script falso falla con «not found» para lo que no conoce.
-    let error = systemctl.main_pid(&unit("otra")).await.unwrap_err();
+    let error = systemctl.cpu_usage_nsec(&unit("otra")).await.unwrap_err();
     assert!(
         matches!(error, SystemctlError::UnitNotFound { .. }),
         "{error:?}"
@@ -170,14 +168,14 @@ async fn la_consulta_tiene_su_propio_tiempo_maximo() {
     // Aunque las acciones admitan 120 s, una consulta colgada no bloquea las métricas.
     let start = Instant::now();
     let error = systemctl(Duration::from_millis(300))
-        .main_pid(&unit("pid-lento"))
+        .cpu_usage_nsec(&unit("pid-lento"))
         .await
         .unwrap_err();
     assert!(
         matches!(
             error,
             SystemctlError::Timeout {
-                operation: Operation::ShowMainPid,
+                operation: Operation::ShowStatus,
                 ..
             }
         ),
@@ -197,7 +195,7 @@ async fn programa_inexistente() {
         Scope::System,
         Duration::from_secs(1),
     )
-    .start(&unit("ok"))
+    .run(Action::Start, &unit("ok"))
     .await
     .unwrap_err();
     assert!(matches!(error, SystemctlError::Io(_)), "{error:?}");
@@ -211,7 +209,7 @@ async fn programa_inexistente() {
 #[ignore = "usa el systemd real; ejecutar como usuario sin privilegios ni regla de polkit"]
 async fn sistema_sin_autorizacion() {
     let error = Systemctl::default()
-        .start(&unit("blacksmith-prueba-inexistente"))
+        .run(Action::Start, &unit("blacksmith-prueba-inexistente"))
         .await
         .unwrap_err();
     assert!(
@@ -290,35 +288,49 @@ async fn ciclo_de_vida_real_de_usuario() {
     let systemctl = Systemctl::new("/usr/bin/systemctl", Scope::User, Duration::from_secs(30));
     let ok = unit("blacksmith-prueba-ok");
 
-    assert_eq!(systemctl.main_pid(&ok).await.unwrap(), None);
-    assert_eq!(systemctl.start(&ok).await.unwrap(), Outcome::Started);
+    assert_eq!(systemctl.status(&ok).await.unwrap().main_pid, None);
+    assert_eq!(
+        systemctl.run(Action::Start, &ok).await.unwrap(),
+        Outcome::Started
+    );
     assert!(is_active(ok.as_str()));
     // El PID es el del `sleep 300` de la unidad.
     let pid = systemctl
-        .main_pid(&ok)
+        .status(&ok)
         .await
         .unwrap()
+        .main_pid
         .expect("PID principal");
     let cmdline = fs::read(format!("/proc/{}/cmdline", pid.as_raw_nonzero())).unwrap();
     assert_eq!(cmdline, b"/bin/sleep\x00300\x00");
-    assert_eq!(systemctl.restart(&ok).await.unwrap(), Outcome::Restarted);
+    assert_eq!(
+        systemctl.run(Action::Restart, &ok).await.unwrap(),
+        Outcome::Restarted
+    );
     assert!(is_active(ok.as_str()));
-    assert_eq!(systemctl.stop(&ok).await.unwrap(), Outcome::Stopped);
+    assert_eq!(
+        systemctl.run(Action::Stop, &ok).await.unwrap(),
+        Outcome::Stopped
+    );
     assert!(!is_active(ok.as_str()));
-    assert_eq!(systemctl.main_pid(&ok).await.unwrap(), None);
+    assert_eq!(systemctl.status(&ok).await.unwrap().main_pid, None);
     // Parar lo ya parado no es un error.
-    assert_eq!(systemctl.stop(&ok).await.unwrap(), Outcome::Stopped);
+    assert_eq!(
+        systemctl.run(Action::Stop, &ok).await.unwrap(),
+        Outcome::Stopped
+    );
     // Inexistente: systemd también responde 0.
     assert_eq!(
         systemctl
-            .main_pid(&unit("blacksmith-prueba-inexistente"))
+            .status(&unit("blacksmith-prueba-inexistente"))
             .await
-            .unwrap(),
+            .unwrap()
+            .main_pid,
         None
     );
 
     let error = systemctl
-        .start(&unit("blacksmith-prueba-falla"))
+        .run(Action::Start, &unit("blacksmith-prueba-falla"))
         .await
         .unwrap_err();
     assert!(
@@ -330,7 +342,7 @@ async fn ciclo_de_vida_real_de_usuario() {
     // temporal y falla si ya hay un archivo con ese nombre.
     user_systemctl(&["mask", "--runtime", "blacksmith-prueba-enmascarada.service"]);
     let error = systemctl
-        .start(&unit("blacksmith-prueba-enmascarada"))
+        .run(Action::Start, &unit("blacksmith-prueba-enmascarada"))
         .await;
     user_systemctl(&[
         "unmask",
@@ -343,7 +355,7 @@ async fn ciclo_de_vida_real_de_usuario() {
     );
 
     let error = systemctl
-        .start(&unit("blacksmith-prueba-manual"))
+        .run(Action::Start, &unit("blacksmith-prueba-manual"))
         .await
         .unwrap_err();
     assert!(

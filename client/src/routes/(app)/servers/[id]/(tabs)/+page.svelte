@@ -13,11 +13,21 @@
     const serverId = $derived(entry?.profile.id);
     const server = $derived(serverId ? serviceStore.server(serverId) : null);
 
+    // Cada lectura programa la siguiente al terminar: con un servidor lento, nunca se solapan
+    // (una respuesta vieja no pisa a una nueva).
     $effect(() => {
         if (!server || entry?.status !== 'connected') return;
-        void server.loadHost();
-        const timer = setInterval(() => void server.loadHost(), HOST_INTERVAL_MS);
-        return () => clearInterval(timer);
+        let stopped = false;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const tick = async () => {
+            await server.loadHost();
+            if (!stopped) timer = setTimeout(tick, HOST_INTERVAL_MS);
+        };
+        void tick();
+        return () => {
+            stopped = true;
+            clearTimeout(timer);
+        };
     });
 </script>
 

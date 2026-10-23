@@ -59,19 +59,6 @@ pub enum ActiveState {
     Refreshing,
 }
 
-/// Consumo del proceso principal del servicio.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProcessMetrics {
-    /// Memoria residente en bytes (para formatearla en la interfaz).
-    pub rss_bytes: u64,
-    /// Memoria residente en megabytes (MiB, 1024 × 1024), con un decimal.
-    pub rss_mb: f64,
-    /// CPU usada desde la muestra anterior, con un decimal. 100 equivale a un núcleo completo:
-    /// en una máquina con 4 núcleos puede llegar a 400, como en `top`.
-    pub cpu_percent: f64,
-}
-
 /// Respuesta de `GET /api/v1/services/{name}/status`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -84,8 +71,6 @@ pub struct ServiceStatusReport {
     pub sub_state: String,
     /// `None` si no hay proceso principal (detenido, fallido…).
     pub pid: Option<u32>,
-    /// `None` sin proceso principal, o si el proceso terminó justo durante la medición.
-    pub metrics: Option<ProcessMetrics>,
     /// Hay una versión activa (un despliegue terminó bien). Sin ella la unidad existe, por la
     /// plantilla, pero no puede arrancar: systemd la omitiría.
     pub deployed: bool,
@@ -166,7 +151,6 @@ mod tests {
             active_state: ActiveState::Inactive,
             sub_state: "dead".into(),
             pid: None,
-            metrics: None,
             deployed: false,
             release: None,
             previous_release: None,
@@ -175,16 +159,7 @@ mod tests {
         };
         assert_eq!(
             serde_json::to_string(&report).unwrap(),
-            r#"{"name":"api","unit":"blacksmith@api.service","loadState":"not-found","activeState":"inactive","subState":"dead","pid":null,"metrics":null,"deployed":false,"release":null,"previousRelease":null,"resources":{"memoryBytes":null,"memoryPeakBytes":null,"memoryLimitBytes":null,"swapBytes":null,"swapLimitBytes":null,"cpuPercent":null,"cpuLimitPercent":null,"tasks":null,"tasksLimit":null,"restarts":null,"uptimeSecs":null},"host":{"cpuCores":0,"memoryBytes":0,"swapBytes":0}}"#
-        );
-        let metrics = ProcessMetrics {
-            rss_bytes: 1_048_576,
-            rss_mb: 1.0,
-            cpu_percent: 12.5,
-        };
-        assert_eq!(
-            serde_json::to_string(&metrics).unwrap(),
-            r#"{"rssBytes":1048576,"rssMb":1.0,"cpuPercent":12.5}"#
+            r#"{"name":"api","unit":"blacksmith@api.service","loadState":"not-found","activeState":"inactive","subState":"dead","pid":null,"deployed":false,"release":null,"previousRelease":null,"resources":{"memoryBytes":null,"memoryPeakBytes":null,"memoryLimitBytes":null,"swapBytes":null,"swapLimitBytes":null,"cpuPercent":null,"cpuLimitPercent":null,"tasks":null,"tasksLimit":null,"restarts":null,"uptimeSecs":null},"host":{"cpuCores":0,"memoryBytes":0,"swapBytes":0}}"#
         );
     }
 

@@ -165,6 +165,9 @@ export class ServiceEntry {
 
     #watchers = 0;
     #timer: ReturnType<typeof setTimeout> | undefined;
+    /** Ciclo de sondeo vigente: un `#tick` en vuelo de un ciclo anterior no reprograma nada (si
+     * no, al dejar de mirar y volver a mirar durante una lectura habría dos bucles a la vez). */
+    #cycle = 0;
 
     constructor(serverId: string, name: string) {
         this.serverId = serverId;
@@ -207,21 +210,25 @@ export class ServiceEntry {
      * de mirar. */
     watch(): () => void {
         this.#watchers++;
-        if (this.#watchers === 1) void this.#tick();
+        if (this.#watchers === 1) void this.#tick(this.#restart());
         return () => {
             this.#watchers--;
-            if (this.#watchers === 0 && this.#timer) {
-                clearTimeout(this.#timer);
-                this.#timer = undefined;
-            }
+            if (this.#watchers === 0) this.#restart();
         };
     }
 
-    async #tick(): Promise<void> {
+    /** Cancela el ciclo de sondeo en curso y devuelve el id del siguiente. */
+    #restart(): number {
+        clearTimeout(this.#timer);
+        this.#timer = undefined;
+        return ++this.#cycle;
+    }
+
+    async #tick(cycle: number): Promise<void> {
         await this.refresh();
-        if (this.#watchers === 0) return;
+        if (cycle !== this.#cycle || this.#watchers === 0) return;
         const delay = this.deploying || this.issuing ? DEPLOYING_INTERVAL_MS : STATUS_INTERVAL_MS;
-        this.#timer = setTimeout(() => void this.#tick(), delay);
+        this.#timer = setTimeout(() => void this.#tick(cycle), delay);
     }
 
     async act(action: ServiceAction): Promise<void> {
@@ -312,10 +319,9 @@ export class ServiceEntry {
 
     #started(run: DeployRun): DeployRun {
         this.runs = [run, ...(this.runs ?? [])];
-        // Reprograma el sondeo al ritmo de despliegue.
         if (this.#watchers > 0) {
-            if (this.#timer) clearTimeout(this.#timer);
-            this.#timer = setTimeout(() => void this.#tick(), DEPLOYING_INTERVAL_MS);
+            const cycle = this.#restart();
+            this.#timer = setTimeout(() => void this.#tick(cycle), DEPLOYING_INTERVAL_MS);
         }
         return run;
     }

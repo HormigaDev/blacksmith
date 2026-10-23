@@ -71,17 +71,11 @@ pub enum AppError {
     #[error("método no permitido")]
     MethodNotAllowed,
 
-    #[error("conflicto: {0}")]
-    Conflict(Cow<'static, str>),
-
     #[error("tiempo de espera agotado")]
     Timeout,
 
     #[error("agente saturado")]
     Overloaded,
-
-    #[error("servicio no disponible: {0}")]
-    Unavailable(Cow<'static, str>),
 
     /// `context` dice qué se intentaba hacer; `source` es la causa real, solo para el registro.
     #[error("{context}")]
@@ -93,6 +87,7 @@ pub enum AppError {
 }
 
 impl AppError {
+    #[cfg(test)]
     pub fn internal(context: &'static str, source: impl Into<BoxError>) -> Self {
         Self::Internal {
             context,
@@ -114,9 +109,8 @@ impl AppError {
             Self::Forbidden => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
-            Self::Conflict(_) => StatusCode::CONFLICT,
             Self::Timeout => StatusCode::REQUEST_TIMEOUT,
-            Self::Overloaded | Self::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Overloaded => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -160,13 +154,11 @@ impl AppError {
             Self::Forbidden => (ErrorCode::Forbidden, "acceso denegado".into()),
             Self::NotFound => (ErrorCode::NotFound, "recurso no encontrado".into()),
             Self::MethodNotAllowed => (ErrorCode::MethodNotAllowed, "método no permitido".into()),
-            Self::Conflict(message) => (ErrorCode::Conflict, message),
             Self::Timeout => (ErrorCode::RequestTimeout, "tiempo de espera agotado".into()),
             Self::Overloaded => (
                 ErrorCode::Overloaded,
                 "agente saturado; reintente en breve".into(),
             ),
-            Self::Unavailable(message) => (ErrorCode::Unavailable, message),
             Self::Internal { context, .. } => (
                 ErrorCode::Internal,
                 format!("error interno del agente: {context}").into(),
@@ -278,7 +270,7 @@ fn service_error(error: &ServiceError) -> (StatusCode, ErrorCode, String) {
             ErrorCode::InvalidDeployment,
             message,
         ),
-        ServiceError::Env(_) => (
+        ServiceError::Env(EnvFileError::Insecure { .. } | EnvFileError::Malformed { .. }) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             ErrorCode::EnvironmentFileInvalid,
             message,
@@ -286,7 +278,9 @@ fn service_error(error: &ServiceError) -> (StatusCode, ErrorCode, String) {
         ServiceError::InvalidLimits(_) => {
             (StatusCode::BAD_REQUEST, ErrorCode::InvalidLimits, message)
         }
-        ServiceError::Metrics(_) | ServiceError::Database(_) => (
+        ServiceError::Env(EnvFileError::Io { .. } | EnvFileError::Task(_))
+        | ServiceError::Task(_)
+        | ServiceError::Database(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             ErrorCode::Internal,
             message,
@@ -329,17 +323,6 @@ pub async fn from_middleware(error: BoxError) -> AppError {
     }
 }
 
-/// Convierte cualquier error en [`AppError::Internal`] indicando qué se intentaba hacer.
-pub trait ResultExt<T> {
-    fn or_internal(self, context: &'static str) -> AppResult<T>;
-}
-
-impl<T, E: Into<BoxError>> ResultExt<T> for Result<T, E> {
-    fn or_internal(self, context: &'static str) -> AppResult<T> {
-        self.map_err(|error| AppError::internal(context, error))
-    }
-}
-
 /// Muestra un error seguido de todas sus causas: `a: b: c`.
 pub struct DisplayChain<'a>(pub &'a (dyn StdError + 'static));
 
@@ -372,9 +355,10 @@ mod tests {
 
     #[tokio::test]
     async fn los_errores_internos_no_filtran_detalles() {
-        let error = Err::<(), _>(io::Error::other("/etc/shadow: permiso denegado"))
-            .or_internal("leyendo la unidad")
-            .unwrap_err();
+        let error = AppError::internal(
+            "leyendo la unidad",
+            io::Error::other("/etc/shadow: permiso denegado"),
+        );
         let (status, body) = body(error).await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(body.code, ErrorCode::Internal);

@@ -15,7 +15,7 @@ use std::{
 
 use futures_util::StreamExt;
 use serde::Deserialize;
-use shared::{ApiErrorBody, ErrorCode, LogEndReason, LogEvent};
+use shared::{LogEndReason, LogEvent};
 use tauri::{ipc::Channel, State};
 use tokio::sync::{oneshot, Mutex};
 use tokio_tungstenite::tungstenite::{self, protocol::WebSocketConfig, Message};
@@ -65,6 +65,17 @@ pub async fn agent_request(
 pub struct LogFollows {
     next: AtomicU32,
     stops: Arc<Mutex<HashMap<u32, oneshot::Sender<()>>>>,
+}
+
+impl LogFollows {
+    /// Para todos los visores. Al recargar la webview nadie llama a `logs_stop`, y enviar a un
+    /// canal de la página anterior no falla: sin esto, cada recarga dejaría un WebSocket abierto
+    /// que ocupa uno de los cupos de flujos del agente.
+    pub async fn stop_all(&self) {
+        for (_, stop) in self.stops.lock().await.drain() {
+            let _ = stop.send(());
+        }
+    }
 }
 
 /// Abre el WebSocket de logs del servicio y reenvía cada evento a `on_event`. Devuelve el id para
@@ -180,21 +191,7 @@ async fn forward(
 
 fn rejected(response: tungstenite::http::Response<Option<Vec<u8>>>) -> CommandError {
     let status = response.status().as_u16();
-    let body = response
-        .into_body()
-        .and_then(|body| serde_json::from_slice::<ApiErrorBody>(&body).ok());
-    match body {
-        Some(body) => CommandError::AgentRejected {
-            status,
-            code: body.code,
-            message: body.message.into_owned(),
-        },
-        None => CommandError::AgentRejected {
-            status,
-            code: ErrorCode::Unknown,
-            message: format!("respuesta {status} sin cuerpo de error"),
-        },
-    }
+    CommandError::agent_rejected(status, response.body().as_deref().unwrap_or_default())
 }
 
 #[cfg(test)]
@@ -202,7 +199,7 @@ mod tests {
     use std::sync::Mutex as StdMutex;
 
     use futures_util::SinkExt;
-    use shared::LogEntry;
+    use shared::{ErrorCode, LogEntry};
     use tauri::ipc::InvokeResponseBody;
     use tokio::net::TcpListener;
     use tokio_tungstenite::tungstenite::http;
@@ -262,6 +259,17 @@ mod tests {
             .await
             .unwrap();
         (socket, notified)
+    }
+
+    /// Al recargar la webview se paran todos los visores (nadie llamará a `logs_stop`).
+    #[tokio::test]
+    async fn recargar_la_webview_para_los_visores() {
+        let follows = LogFollows::default();
+        let (stop, stopped) = oneshot::channel();
+        follows.stops.lock().await.insert(1, stop);
+        follows.stop_all().await;
+        assert!(stopped.await.is_ok());
+        assert!(follows.stops.lock().await.is_empty());
     }
 
     #[tokio::test]

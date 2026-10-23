@@ -8,13 +8,15 @@
 <script lang="ts">
     import { openUrl } from '@tauri-apps/plugin-opener';
 
+    import { untrack } from 'svelte';
+
     import { page } from '$app/state';
-    import { followLogs } from '$lib/agent';
+    import { followLogs, isRunning } from '$lib/agent';
     import DeployKeyPanel from '$lib/components/services/DeployKeyPanel.svelte';
     import DeploymentForm from '$lib/components/services/DeploymentForm.svelte';
     import DeployRuns from '$lib/components/services/DeployRuns.svelte';
     import LogViewer from '$lib/components/services/LogViewer.svelte';
-    import { Panel, Spinner } from '$lib/components/ui';
+    import { Button, Panel, Spinner } from '$lib/components/ui';
     import { addDeployKey, gitHubBranches } from '$lib/github';
     import { describeError } from '$lib/http';
     import { t } from '$lib/i18n';
@@ -48,7 +50,11 @@
     $effect(() => {
         const id = serverId;
         const current = name;
-        if (!id || lastRunId === undefined || lastRunStart === undefined) return;
+        if (!id || lastRunId === undefined || lastRunStart === undefined) {
+            // Sin despliegues (p. ej. otro servicio): no se queda la salida del anterior.
+            logs = undefined;
+            return;
+        }
         // Un segundo de margen: el registro y el arranque de la unidad no son el mismo instante.
         const since = Math.max(0, lastRunStart - 1);
         const session = new LogSession((onEvent) => followLogs(id, current, onEvent, { deploy: true, since }));
@@ -58,10 +64,16 @@
     });
 
     $effect(() => {
+        // Solo informativo (aviso de repositorios privados): sin él, el formulario funciona igual.
         if (server && server.github === undefined) void server.loadGitHub().catch(() => undefined);
     });
+    let keyError = $state<string | null>(null);
+    function loadKey(): void {
+        keyError = null;
+        service?.loadKey().catch((error: unknown) => (keyError = describeError(error)));
+    }
     $effect(() => {
-        if (service && usesKey && service.key === undefined) void service.loadKey().catch(() => undefined);
+        if (service && usesKey && service.key === undefined) untrack(loadKey);
     });
 
     async function registerKey(): Promise<void> {
@@ -70,7 +82,9 @@
     }
 
     function openDeployKeys(): void {
-        if (repository) void openUrl(`https://github.com/${repository.owner}/${repository.name}/settings/keys/new`);
+        if (!repository) return;
+        const path = [repository.owner, repository.name].map(encodeURIComponent).join('/');
+        void openUrl(`https://github.com/${path}/settings/keys/new`);
     }
 
     async function rollback(): Promise<void> {
@@ -105,6 +119,8 @@
                         {deployment}
                         githubConnected={github.user !== null}
                         repositories={github.repositories}
+                        repositoriesError={github.repositoriesError}
+                        onRetryRepositories={() => void github.loadRepositories(true)}
                         loadBranches={gitHubBranches}
                         onConnectGitHub={() => (github.panelOpen = true)}
                         onSave={async (update) => {
@@ -117,14 +133,19 @@
 
             {#if repository && usesKey}
                 <Panel title={t('services.deployKey.title')}>
-                    <DeployKeyPanel
-                        key={service.key}
-                        {repository}
-                        canRegister={github.custom && github.user !== null}
-                        onCreate={() => service.createKey()}
-                        onRegister={registerKey}
-                        onOpenGitHub={openDeployKeys}
-                    />
+                    {#if keyError && service.key === undefined}
+                        <p class="alert" role="alert">{keyError}</p>
+                        <div><Button size="sm" onclick={loadKey}>{t('common.retry')}</Button></div>
+                    {:else}
+                        <DeployKeyPanel
+                            key={service.key}
+                            {repository}
+                            canRegister={github.custom && github.user !== null}
+                            onCreate={() => service.createKey()}
+                            onRegister={registerKey}
+                            onOpenGitHub={openDeployKeys}
+                        />
+                    {/if}
                 </Panel>
             {/if}
 
@@ -136,9 +157,7 @@
                     previousRelease={service.status?.previousRelease}
                     onDeploy={deploy}
                     onRollback={rollback}
-                    serviceRunning={service.status
-                        ? ['active', 'reloading', 'activating'].includes(service.status.activeState)
-                        : null}
+                    serviceRunning={service.status ? isRunning(service.status.activeState) : null}
                 >
                     {#snippet output()}
                         {#if logs}

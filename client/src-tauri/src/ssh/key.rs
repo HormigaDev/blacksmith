@@ -81,7 +81,10 @@ fn read_key_file(path: &Path) -> Result<Zeroizing<String>, CommandError> {
     if metadata.len() > MAX_KEY_BYTES {
         return Err(CommandError::KeyTooLarge);
     }
-    let mut content = Zeroizing::new(String::new());
+    // Reservado de antemano: si la cadena creciera al leer, la copia anterior quedaría sin borrar.
+    let mut content = Zeroizing::new(String::with_capacity(
+        usize::try_from(metadata.len()).unwrap_or(0) + 1,
+    ));
     file.take(MAX_KEY_BYTES)
         .read_to_string(&mut content)
         .map_err(|_| CommandError::KeyInvalid)?;
