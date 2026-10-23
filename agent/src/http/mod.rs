@@ -11,7 +11,7 @@ use axum::{
     extract::{DefaultBodyLimit, Request},
     http::{HeaderName, HeaderValue, header},
     middleware,
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use tower::{ServiceBuilder, limit::GlobalConcurrencyLimitLayer};
 use tower_http::{
@@ -36,6 +36,52 @@ pub fn router(state: AppState) -> Router {
     // Superficie de administración: solo alcanzable a través del túnel SSH.
     let admin = Router::new()
         .route("/health", get(routes::health::status))
+        .route(
+            "/services",
+            get(routes::services::list).post(routes::services::register),
+        )
+        .route("/services/{name}", delete(routes::services::unregister))
+        .route(
+            "/env",
+            get(routes::services::global_environment).put(routes::services::set_global_environment),
+        )
+        .route(
+            "/github",
+            get(routes::services::github_access)
+                .put(routes::services::set_github_access)
+                .delete(routes::services::remove_github_access),
+        )
+        .route(
+            "/services/{name}/deploy-key",
+            get(routes::services::deploy_key).post(routes::services::create_deploy_key),
+        )
+        .route(
+            "/services/{name}/site",
+            get(routes::services::site)
+                .put(routes::services::set_site)
+                .delete(routes::services::remove_site),
+        )
+        .route(
+            "/services/{name}/site/certificate",
+            post(routes::services::retry_certificate),
+        )
+        .route("/services/{name}/deploy", post(routes::services::deploy))
+        .route(
+            "/services/{name}/rollback",
+            post(routes::services::rollback),
+        )
+        .route(
+            "/services/{name}/deploys",
+            get(routes::services::deploy_runs),
+        )
+        .route(
+            "/services/{name}/deployment",
+            get(routes::services::deployment).put(routes::services::set_deployment),
+        )
+        .route(
+            "/services/{name}/env",
+            get(routes::services::environment).put(routes::services::set_environment),
+        )
         .route("/services/{name}/status", get(routes::services::status))
         .route("/services/{name}/start", post(routes::services::start))
         .route("/services/{name}/stop", post(routes::services::stop))

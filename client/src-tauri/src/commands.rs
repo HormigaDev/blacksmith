@@ -31,13 +31,16 @@ use crate::{
 pub const TUNNEL_CLOSED_EVENT: &str = "tunnel://closed";
 
 pub struct AppState {
-    vault: Arc<Vault>,
+    pub(crate) vault: Arc<Vault>,
     servers: Arc<ServerStore>,
     host_keys: HostKeyStore,
     home: Option<PathBuf>,
     tunnels: Mutex<HashMap<String, OpenTunnel>>,
     /// Llaves de servidor presentadas y aún sin confirmar, por `host:puerto`.
     pending_host_keys: std::sync::Mutex<HashMap<String, PresentedKey>>,
+    /// Visores de logs abiertos (ver `agent_api`).
+    pub(crate) log_follows: crate::agent_api::LogFollows,
+    pub(crate) github: crate::github::GitHubState,
 }
 
 struct OpenTunnel {
@@ -52,6 +55,7 @@ impl AppState {
         servers: ServerStore,
         host_keys: HostKeyStore,
         home: Option<PathBuf>,
+        github: crate::github::GitHubState,
     ) -> Self {
         Self {
             vault: Arc::new(vault),
@@ -60,7 +64,30 @@ impl AppState {
             home,
             tunnels: Mutex::new(HashMap::new()),
             pending_host_keys: std::sync::Mutex::new(HashMap::new()),
+            log_follows: crate::agent_api::LogFollows::default(),
+            github,
         }
+    }
+
+    /// Dirección del agente de un servidor: el extremo local de su túnel o, si es este equipo,
+    /// el propio agente. La webview solo elige el servidor, nunca la dirección.
+    pub(crate) async fn agent_addr(&self, server_id: &str) -> CommandResult<SocketAddr> {
+        let servers = Arc::clone(&self.servers);
+        let id = server_id.to_owned();
+        let profile = blocking(move || servers.get(&id))
+            .await?
+            .ok_or(CommandError::ServerNotFound)?;
+        let port = match profile.kind {
+            ServerKind::Local => profile.port,
+            ServerKind::Ssh => self
+                .tunnels
+                .lock()
+                .await
+                .get(server_id)
+                .map(|open| open.tunnel.local_port())
+                .ok_or(CommandError::NotConnected)?,
+        };
+        Ok(SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
     }
 }
 

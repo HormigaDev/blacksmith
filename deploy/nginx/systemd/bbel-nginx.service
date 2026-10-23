@@ -1,0 +1,15 @@
+# BBEL Blacksmith · valida y aplica la configuración de nginx. La arranca el agente (polkit solo
+# le deja `start` de esta unidad) tras escribir el sitio de un servicio; si `nginx -t` falla, la
+# unidad falla, nginx sigue con la configuración anterior y el agente restaura el sitio.
+#
+# Es lo único que corre como root por cuenta del agente: dos órdenes fijas, sin argumentos suyos.
+
+[Unit]
+Description=BBEL Blacksmith: aplicar la configuración de nginx
+After=nginx.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nginx -t -q
+ExecStart=/usr/bin/systemctl reload-or-restart nginx.service
+TimeoutStartSec=60

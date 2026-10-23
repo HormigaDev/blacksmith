@@ -24,6 +24,8 @@ use std::{
 };
 
 use secrecy::SecretString;
+
+use crate::systemd::Scope;
 use tracing_subscriber::EnvFilter;
 
 pub const ENV_PREFIX: &str = "BLACKSMITH_";
@@ -43,6 +45,7 @@ pub mod vars {
     pub const GITHUB_WEBHOOK_SECRET_FILE: &str = "BLACKSMITH_GITHUB_WEBHOOK_SECRET_FILE";
     pub const DATABASE_PATH: &str = "BLACKSMITH_DATABASE_PATH";
     pub const MAX_LOG_STREAMS: &str = "BLACKSMITH_MAX_LOG_STREAMS";
+    pub const SYSTEMD_SCOPE: &str = "BLACKSMITH_SYSTEMD_SCOPE";
 
     pub(super) const ALL: &[&str] = &[
         ENV,
@@ -58,6 +61,7 @@ pub mod vars {
         GITHUB_WEBHOOK_SECRET_FILE,
         DATABASE_PATH,
         MAX_LOG_STREAMS,
+        SYSTEMD_SCOPE,
     ];
 }
 
@@ -98,6 +102,14 @@ impl Environment {
             Self::Development => ".data/agent.db",
             Self::Production => "/var/lib/blacksmith/agent.db",
         })
+    }
+
+    /// Producción: los servicios del sistema. Desarrollo: los del usuario (modo local, sin root).
+    fn default_systemd_scope(self) -> Scope {
+        match self {
+            Self::Development => Scope::User,
+            Self::Production => Scope::System,
+        }
     }
 
     fn default_log_format(self) -> LogFormat {
@@ -148,6 +160,10 @@ pub struct Config {
     pub database_path: PathBuf,
     /// Flujos de logs (`journalctl -f`) simultáneos; cada uno es un proceso hijo.
     pub max_log_streams: usize,
+    /// Gestor de systemd de los servicios desplegados: `system` (servidor, con polkit) o `user`
+    /// (modo local: el systemd del propio usuario, sin root). Define también todas las rutas
+    /// (ver `deploy::Paths`).
+    pub systemd_scope: Scope,
 }
 
 impl Config {
@@ -212,6 +228,11 @@ impl Config {
                 |raw| parse_database_path(raw, environment),
             ),
             max_log_streams: reader.number(vars::MAX_LOG_STREAMS, 4, 1..=32),
+            systemd_scope: reader.optional(
+                vars::SYSTEMD_SCOPE,
+                environment.default_systemd_scope(),
+                parse_scope,
+            ),
         };
 
         reader.finish(config)
@@ -399,6 +420,14 @@ fn parse_database_path(raw: &str, environment: Environment) -> Result<PathBuf, S
         ));
     }
     Ok(path)
+}
+
+fn parse_scope(raw: &str) -> Result<Scope, String> {
+    match raw {
+        "system" => Ok(Scope::System),
+        "user" => Ok(Scope::User),
+        other => Err(format!("«{other}» no es válido; use `system` o `user`")),
+    }
 }
 
 fn parse_log_filter(raw: &str) -> Result<String, String> {

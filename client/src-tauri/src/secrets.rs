@@ -72,8 +72,19 @@ impl Vault {
     }
 
     pub fn put(&self, id: &str, credential: &Credential) -> Result<(), CommandError> {
+        self.put_value(id, credential)
+    }
+
+    pub fn get(&self, id: &str) -> Result<Option<Credential>, CommandError> {
+        self.get_value(id)
+    }
+
+    /// Guarda cualquier secreto serializable (p. ej. el token de GitHub) con el mismo cifrado.
+    /// El `id` no debe coincidir con el de un servidor: va como dato autenticado, así que un
+    /// archivo no descifra con otro id.
+    pub fn put_value<T: Serialize>(&self, id: &str, value: &T) -> Result<(), CommandError> {
         let plaintext = Zeroizing::new(
-            serde_json::to_vec(credential)
+            serde_json::to_vec(value)
                 .map_err(|error| CommandError::internal("serializando la credencial", error))?,
         );
         let mut nonce = [0u8; NONCE_LEN];
@@ -98,7 +109,10 @@ impl Vault {
             .map_err(|error| CommandError::internal("guardando la credencial", error))
     }
 
-    pub fn get(&self, id: &str) -> Result<Option<Credential>, CommandError> {
+    pub fn get_value<T: serde::de::DeserializeOwned>(
+        &self,
+        id: &str,
+    ) -> Result<Option<T>, CommandError> {
         let file = match fs::read(self.path(id)) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),

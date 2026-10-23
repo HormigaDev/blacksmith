@@ -18,10 +18,10 @@ workspace = true
 
 # Features mínimas a propósito: cada una cuesta tamaño de binario y RAM (objetivo < 20 MB en reposo).
 [dependencies]
-axum = { version = "0.8", default-features = false, features = ["http1", "json", "macros", "matched-path", "tokio", "tracing", "ws"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "macros", "matched-path", "query", "tokio", "tracing", "ws"] }
 dotenvy = "0.15"
 rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
-rustix = { version = "1", default-features = false, features = ["fs", "process", "std"] }
+rustix = { version = "1", default-features = false, features = ["fs", "process", "std", "system"] }
 sd-notify = "0.4"
 secrecy = "0.10"
 serde = { version = "1", features = ["derive"] }

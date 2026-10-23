@@ -12,8 +12,8 @@
     color-scheme: light;
 
     /* Fondos y superficies, de más profunda a más elevada */
-    --color-bg: #f6f6f7;
-    --color-bg-subtle: #efeff1;
+    --color-bg: #f7f7f8;
+    --color-bg-subtle: #f0f0f2;
     --color-surface: #ffffff;
     --color-surface-raised: #ffffff;
     --color-surface-hover: #f1f1f3;
@@ -21,8 +21,8 @@
     --color-overlay: #18181b66;
 
     /* Bordes */
-    --color-border: #e4e4e7;
-    --color-border-strong: #c9c9cf;
+    --color-border: #e8e8eb;
+    --color-border-strong: #d1d1d6;
 
     /* Texto */
     --color-text: #18181b;
@@ -59,7 +59,7 @@
     --color-scrollbar-hover: #a1a1aa;
 
     /* Sombras */
-    --shadow-sm: 0 1px 2px #18181b14;
-    --shadow-md: 0 2px 4px #18181b0f, 0 4px 12px #18181b14;
-    --shadow-lg: 0 8px 24px #18181b1f, 0 2px 6px #18181b0f;
+    --shadow-sm: 0 1px 2px #18181b0a, 0 1px 3px #18181b0a;
+    --shadow-md: 0 2px 4px #18181b0a, 0 6px 16px #18181b0f;
+    --shadow-lg: 0 12px 32px #18181b1a, 0 2px 6px #18181b0d;
 }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-github-configure"
+description = "Enables the github_configure command without any pre-configured scope."
+commands.allow = ["github_configure"]
+
+[[permission]]
+identifier = "deny-github-configure"
+description = "Denies the github_configure command without any pre-configured scope."
+commands.deny = ["github_configure"]

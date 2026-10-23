@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-github-login-start"
+description = "Enables the github_login_start command without any pre-configured scope."
+commands.allow = ["github_login_start"]
+
+[[permission]]
+identifier = "deny-github-login-start"
+description = "Denies the github_login_start command without any pre-configured scope."
+commands.deny = ["github_login_start"]

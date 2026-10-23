@@ -188,6 +188,10 @@ async fn la_consulta_tiene_su_propio_tiempo_maximo() {
 
 #[tokio::test]
 async fn programa_inexistente() {
+    // El script falso se escribe antes de cualquier `fork`: si este test lanzara un proceso
+    // mientras otro lo escribe, el hijo heredaría el descriptor de escritura y ejecutar el
+    // script fallaría con ETXTBSY.
+    fake();
     let error = Systemctl::new(
         "/no/existe/systemctl",
         Scope::System,

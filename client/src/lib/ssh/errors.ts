@@ -27,6 +27,20 @@ export const TUNNEL_ERROR_CODES = [
     'AGENT_UNREACHABLE',
     'AGENT_INVALID',
     'PORT_IN_USE',
+    'SERVER_NOT_FOUND',
+    'NOT_CONNECTED',
+    'AGENT_REJECTED',
+    'GITHUB_NOT_CONFIGURED',
+    'GITHUB_NOT_CONNECTED',
+    'GITHUB_ACCESS_DENIED',
+    'GITHUB_CODE_EXPIRED',
+    'GITHUB_LOGIN_CANCELLED',
+    'GITHUB_DEVICE_FLOW_DISABLED',
+    'GITHUB_UNREACHABLE',
+    'GITHUB_RATE_LIMITED',
+    'GITHUB_PERMISSION_MISSING',
+    'GITHUB_KEY_IN_USE',
+    'GITHUB_ERROR',
     'INTERNAL',
 ] as const;
 
@@ -48,16 +62,20 @@ export class TunnelError extends Error {
     readonly port: number | undefined;
     /** Campo inválido del destino (`INVALID_TARGET`): `host`, `port` o `username`. */
     readonly field: 'host' | 'port' | 'username' | undefined;
+    /** Rechazo del agente (`AGENT_REJECTED`): su estado HTTP y su código (`shared::ErrorCode`). */
+    readonly agent: { status: number; code: string } | undefined;
 
     constructor(code: TunnelErrorCode, message: string, details: Record<string, unknown> = {}) {
         super(message);
         this.name = 'TunnelError';
         this.code = code;
-        const { algorithm, fingerprint, port, field } = details;
+        const { algorithm, fingerprint, port, field, status, agentCode } = details;
         this.hostKey =
             typeof algorithm === 'string' && typeof fingerprint === 'string' ? { algorithm, fingerprint } : undefined;
         this.port = typeof port === 'number' ? port : undefined;
         this.field = field === 'host' || field === 'port' || field === 'username' ? field : undefined;
+        this.agent =
+            typeof status === 'number' && typeof agentCode === 'string' ? { status, code: agentCode } : undefined;
     }
 }
 

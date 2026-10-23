@@ -3,16 +3,25 @@
 //! Este crate es el contrato de la API: cualquier cambio aquí debe romper la compilación del
 //! cliente en lugar de fallar en tiempo de ejecución.
 
+mod deployment;
+mod env;
 mod error;
 mod logs;
 mod services;
+mod site;
 
+pub use deployment::{
+    DeployKey, DeployKind, DeployRun, DeployStatus, GitHubAccess, RepositoryAccess, RepositoryRef,
+    ServiceDeployment, SetGitHubAccess, UpdateDeployment,
+};
+pub use env::{EnvVariable, GlobalEnvironment, ServiceEnvironment, UpdateEnvironment};
 pub use error::{ApiErrorBody, ErrorCode};
 pub use logs::{LOG_BACKLOG_LINES, LogEndReason, LogEntry, LogEvent};
 pub use services::{
-    ActiveState, LoadState, ProcessMetrics, SERVICES_PATH, ServiceActionReport, ServiceOutcome,
-    ServiceStatusReport,
+    ActiveState, LoadState, ProcessMetrics, RegisterService, SERVICES_PATH, ServiceActionReport,
+    ServiceOutcome, ServiceStatusReport, ServiceSummary,
 };
+pub use site::{Site, SiteConfig, SiteTemplate, TlsStatus};
 
 use serde::{Deserialize, Serialize};
 

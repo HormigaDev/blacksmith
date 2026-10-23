@@ -10,6 +10,7 @@ use tokio::{
 use crate::{
     config::{Config, Environment},
     db::Database,
+    deploy::Paths,
     error::DisplayChain,
     http,
     services::{PermissionCheck, ServiceManager},
@@ -32,7 +33,7 @@ pub enum ServerError {
 
 /// Sirve hasta recibir SIGTERM/SIGINT. Después drena las conexiones abiertas durante, como
 /// mucho, `shutdown_timeout`; las que sigan vivas se cortan.
-pub async fn run(config: Arc<Config>, db: Database) -> Result<(), ServerError> {
+pub async fn run(config: Arc<Config>, db: Database, paths: Paths) -> Result<(), ServerError> {
     // Los manejadores se instalan antes de aceptar tráfico para que un fallo aborte el arranque.
     let mut sigterm = signal(SignalKind::terminate()).map_err(ServerError::Signals)?;
     let mut sigint = signal(SignalKind::interrupt()).map_err(ServerError::Signals)?;
@@ -43,8 +44,18 @@ pub async fn run(config: Arc<Config>, db: Database) -> Result<(), ServerError> {
         .map_err(|source| ServerError::Bind { addr, source })?;
 
     let (draining, drain_signal) = watch::channel(false);
-    let state = AppState::new(Arc::clone(&config), db);
+    match db.interrupt_running_deploys().await {
+        Ok(0) => {}
+        Ok(count) => tracing::warn!(
+            count,
+            "despliegues interrumpidos por el reinicio del agente"
+        ),
+        Err(error) => tracing::error!(%error, "no se pudieron cerrar los despliegues pendientes"),
+    }
+    let state = AppState::new(Arc::clone(&config), db, paths);
     let services = state.services.clone();
+    // Los servicios que estaban en marcha vuelven a estarlo sin que nadie lo pida.
+    tokio::spawn(services.clone().resume());
     let shutdown = state.shutdown.clone();
     let app = http::router(state);
     let server = axum::serve(listener, app)

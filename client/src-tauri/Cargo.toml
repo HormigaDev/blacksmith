@@ -42,6 +42,14 @@ aes-gcm = "=0.11.1"
 getrandom = "0.4"
 sha2 = "0.11"
 data-encoding = "2"
+# Logs en tiempo real (WebSocket del agente). Las mismas versiones que ya usa el agente.
+tokio-tungstenite = { version = "=0.29.0", default-features = false, features = ["connect", "handshake"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+# GitHub (src/github): HTTPS desde Rust, porque la webview no puede salir a internet (CSP). TLS con
+# rustls + ring (la misma criptografía que russh, sin aws-lc ni C) y los certificados raíz del
+# sistema operativo.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 
 # Llavero del sistema operativo: Secret Service (GNOME Keyring, KWallet) por D-Bus en Rust puro.
 [target.'cfg(target_os = "linux")'.dependencies]

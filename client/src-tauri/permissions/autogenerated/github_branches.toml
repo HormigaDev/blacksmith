@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-github-branches"
+description = "Enables the github_branches command without any pre-configured scope."
+commands.allow = ["github_branches"]
+
+[[permission]]
+identifier = "deny-github-branches"
+description = "Denies the github_branches command without any pre-configured scope."
+commands.deny = ["github_branches"]

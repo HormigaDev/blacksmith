@@ -14,15 +14,17 @@ set -eu
 }
 
 UNITS=/run/systemd/system
-MANAGED=bbel-verificacion.service
+MANAGED=bbel@verificacion.service
+DEPLOY=bbel-deploy@verificacion.service
+CERT=bbel-certbot@verificacion.example.service
 FOREIGN=blacksmith-verificacion-ajena.service
 created_user=no
 
 cleanup() {
-    systemctl stop "$MANAGED" "$FOREIGN" 2>/dev/null || true
-    rm -f "$UNITS/$MANAGED" "$UNITS/$FOREIGN"
+    systemctl stop "$MANAGED" "$DEPLOY" "$CERT" "$FOREIGN" 2>/dev/null || true
+    rm -f "$UNITS/$MANAGED" "$UNITS/$DEPLOY" "$UNITS/$CERT" "$UNITS/$FOREIGN"
     systemctl daemon-reload
-    systemctl reset-failed "$MANAGED" "$FOREIGN" 2>/dev/null || true
+    systemctl reset-failed "$MANAGED" "$DEPLOY" "$CERT" "$FOREIGN" 2>/dev/null || true
     if [ "$created_user" = yes ]; then userdel blacksmith; fi
 }
 trap cleanup EXIT
@@ -32,7 +34,7 @@ if ! getent passwd blacksmith >/dev/null; then
     created_user=yes
 fi
 
-for unit in "$MANAGED" "$FOREIGN"; do
+for unit in "$MANAGED" "$DEPLOY" "$CERT" "$FOREIGN"; do
     printf '[Service]\nExecStart=/bin/sleep infinity\nDynamicUser=yes\n' >"$UNITS/$unit"
 done
 systemctl daemon-reload
@@ -56,11 +58,30 @@ expect() {
 expect permitido start "$MANAGED"
 expect permitido restart "$MANAGED"
 expect permitido stop "$MANAGED"
+expect permitido start "$DEPLOY"
+expect permitido stop "$DEPLOY"
+expect denegado restart "$DEPLOY"
 expect denegado enable "$MANAGED"
 expect denegado mask "$MANAGED"
 expect denegado start "$FOREIGN"
 expect denegado stop "$FOREIGN"
 expect denegado restart blacksmith.service
+# nginx: solo pedir certificados y aplicar la configuración; nunca parar ni tocar nginx.
+expect permitido start "$CERT"
+expect denegado stop "$CERT"
+expect denegado restart nginx.service
+expect denegado stop nginx.service
+
+# Una unidad transitoria con el prefijo permitido llevaría cualquier comando y se ejecutaría
+# como root: crearla debe estar denegado aunque el nombre encaje con la regla.
+if runuser -u blacksmith -- env LC_ALL=C systemd-run --no-ask-password --quiet \
+    --unit=bbel@verificacion-transitoria -- /bin/true >/dev/null 2>&1; then
+    printf 'FALLA  denegado  %-8s %s\n' "run" "bbel@verificacion-transitoria (systemd-run)"
+    systemctl stop bbel@verificacion-transitoria.service 2>/dev/null || true
+    failures=$((failures + 1))
+else
+    printf 'ok     %-9s %-8s %s\n' "denegado" "run" "bbel@verificacion-transitoria (systemd-run)"
+fi
 
 # Mensaje exacto de una denegación (el agente lo clasifica como PermissionDenied).
 runuser -u blacksmith -- env LC_ALL=C systemctl --no-ask-password start -- "$FOREIGN" 2>&1 | head -1 || true

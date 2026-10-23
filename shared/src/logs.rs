@@ -33,6 +33,9 @@ pub enum LogEndReason {
     AgentShutdown,
     /// El cliente no leía lo bastante rápido y se cortó para no acumular memoria.
     ClientTooSlow,
+    /// Lo añade la aplicación de escritorio (el agente nunca lo envía): la conexión con el
+    /// agente se cortó sin un `end` (túnel caído, agente reiniciado…).
+    ConnectionLost,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

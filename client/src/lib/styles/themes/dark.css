@@ -4,8 +4,8 @@
     color-scheme: dark;
 
     /* Fondos y superficies, de más profunda a más elevada */
-    --color-bg: #0f0f11;
-    --color-bg-subtle: #141417;
+    --color-bg: #0e0e10;
+    --color-bg-subtle: #131316;
     --color-surface: #18181b;
     --color-surface-raised: #1f1f23;
     --color-surface-hover: #26262b;
@@ -13,7 +13,7 @@
     --color-overlay: #00000099;
 
     /* Bordes */
-    --color-border: #2a2a30;
+    --color-border: #26262b;
     --color-border-strong: #3f3f46;
 
     /* Texto */

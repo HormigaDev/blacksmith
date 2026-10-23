@@ -5,9 +5,13 @@
 
 pub mod config;
 pub mod db;
+pub mod deploy;
+pub mod envfile;
 pub mod error;
+pub mod github;
 pub mod http;
 pub mod metrics;
+pub mod nginx;
 pub mod routes;
 pub mod server;
 pub mod services;

@@ -246,7 +246,7 @@
 
     .grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(var(--layout-card-min-width), 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--layout-card-min-width)), 1fr));
         gap: var(--space-4);
     }
 

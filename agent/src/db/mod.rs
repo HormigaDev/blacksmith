@@ -19,10 +19,15 @@ use rusqlite::{
     Connection, ErrorCode, OpenFlags, OptionalExtension, Row, config::DbConfig, params,
 };
 
-use crate::services::{Service, ServiceId, ServiceName, ServiceSlug};
+use shared::{
+    DeployKind, DeployRun, DeployStatus, RepositoryAccess, RepositoryRef, SiteConfig, SiteTemplate,
+    TlsStatus, UpdateDeployment,
+};
+
+use crate::services::{Service, ServiceDescription, ServiceId, ServiceName, ServiceSlug};
 
 /// Versión del esquema de `schema.sql`. Se guarda en `PRAGMA user_version`.
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 9;
 const SCHEMA: &str = include_str!("schema.sql");
 
 /// Caché de páginas pequeña: el agente debe quedarse por debajo de 20 MB en reposo.
@@ -55,6 +60,12 @@ pub enum DbError {
     /// Un valor guardado no cumple las reglas de su tipo: la base de datos se modificó por fuera.
     #[error("dato inválido en la base de datos: {0}")]
     Corrupt(String),
+
+    #[error("ya hay un despliegue en curso")]
+    DeployInProgress,
+
+    #[error("otro servicio ya usa el dominio «{0}»")]
+    DomainInUse(String),
 
     #[error("la conexión quedó inutilizable tras un pánico")]
     Poisoned,
@@ -137,18 +148,21 @@ impl Database {
         &self,
         slug: ServiceSlug,
         name: ServiceName,
+        description: ServiceDescription,
     ) -> Result<Service, DbError> {
         self.call(move |connection| {
             let now = now();
             let inserted = connection.execute(
-                "INSERT INTO services (slug, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)",
-                params![slug.as_str(), name.as_str(), now],
+                "INSERT INTO services (slug, name, description, created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?4)",
+                params![slug.as_str(), name.as_str(), description.as_str(), now],
             );
             match inserted {
                 Ok(_) => Ok(Service {
                     id: ServiceId(connection.last_insert_rowid()),
                     slug,
                     name,
+                    description,
                     created_at: now,
                     updated_at: now,
                 }),
@@ -165,7 +179,7 @@ impl Database {
     pub async fn services(&self) -> Result<Vec<Service>, DbError> {
         self.call(|connection| {
             let mut statement = connection.prepare(
-                "SELECT id, slug, name, created_at, updated_at FROM services ORDER BY id",
+                "SELECT id, slug, name, description, created_at, updated_at FROM services ORDER BY id",
             )?;
             let rows = statement.query_map([], service_row)?;
             rows.map(|row| row?).collect()
@@ -177,7 +191,7 @@ impl Database {
         self.call(move |connection| {
             connection
                 .query_row(
-                    "SELECT id, slug, name, created_at, updated_at FROM services WHERE id = ?1",
+                    "SELECT id, slug, name, description, created_at, updated_at FROM services WHERE id = ?1",
                     [id.0],
                     service_row,
                 )
@@ -191,12 +205,446 @@ impl Database {
         self.call(move |connection| {
             connection
                 .query_row(
-                    "SELECT id, slug, name, created_at, updated_at FROM services WHERE slug = ?1",
+                    "SELECT id, slug, name, description, created_at, updated_at FROM services WHERE slug = ?1",
                     [slug.as_str()],
                     service_row,
                 )
                 .optional()?
                 .transpose()
+        })
+        .await
+    }
+
+    /// Definición del despliegue de un servicio y cuándo se guardó; `None` si nunca se definió.
+    pub async fn deployment(
+        &self,
+        id: ServiceId,
+    ) -> Result<Option<(UpdateDeployment, i64)>, DbError> {
+        self.call(move |connection| {
+            connection
+                .query_row(
+                    "SELECT repo_owner, repo_name, repo_branch, setup_commands, start_command, updated_at, access, \
+                     publish_dir FROM deployments WHERE service_id = ?1",
+                    [id.0],
+                    |row| {
+                        let owner: Option<String> = row.get(0)?;
+                        let name: Option<String> = row.get(1)?;
+                        let branch: Option<String> = row.get(2)?;
+                        let commands: String = row.get(3)?;
+                        Ok((
+                            (owner, name, branch),
+                            commands,
+                            row.get::<_, String>(4)?,
+                            row.get::<_, i64>(5)?,
+                            row.get::<_, String>(6)?,
+                            row.get::<_, Option<String>>(7)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .map(|((owner, name, branch), commands, start_command, updated_at, access, publish_dir)| {
+                    let repository = match (owner, name, branch) {
+                        (Some(owner), Some(name), Some(branch)) => Some(RepositoryRef { owner, name, branch }),
+                        _ => None,
+                    };
+                    let setup_commands: Vec<String> = serde_json::from_str(&commands)
+                        .map_err(|error| DbError::Corrupt(format!("comandos de preparación: {error}")))?;
+                    let access = match access.as_str() {
+                        "account" => RepositoryAccess::Account,
+                        "deployKey" => RepositoryAccess::DeployKey,
+                        other => return Err(DbError::Corrupt(format!("acceso «{other}»"))),
+                    };
+                    Ok((
+                        UpdateDeployment {
+                            repository,
+                            access,
+                            setup_commands,
+                            start_command,
+                            publish_dir,
+                        },
+                        updated_at,
+                    ))
+                })
+                .transpose()
+        })
+        .await
+    }
+
+    /// Guarda (sustituye) la definición del despliegue, ya validada. Devuelve la fecha guardada.
+    pub async fn set_deployment(
+        &self,
+        id: ServiceId,
+        deployment: UpdateDeployment,
+    ) -> Result<i64, DbError> {
+        self.call(move |connection| {
+            let now = now();
+            let commands = serde_json::to_string(&deployment.setup_commands)
+                .map_err(|error| DbError::Corrupt(format!("comandos de preparación: {error}")))?;
+            let repository = deployment.repository.as_ref();
+            connection.execute(
+                "INSERT INTO deployments \
+                     (service_id, repo_owner, repo_name, repo_branch, setup_commands, start_command, updated_at, access, \
+                      publish_dir) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
+                 ON CONFLICT (service_id) DO UPDATE SET \
+                     repo_owner = excluded.repo_owner, repo_name = excluded.repo_name, \
+                     repo_branch = excluded.repo_branch, setup_commands = excluded.setup_commands, \
+                     start_command = excluded.start_command, updated_at = excluded.updated_at, \
+                     access = excluded.access, publish_dir = excluded.publish_dir",
+                params![
+                    id.0,
+                    repository.map(|r| r.owner.as_str()),
+                    repository.map(|r| r.name.as_str()),
+                    repository.map(|r| r.branch.as_str()),
+                    commands,
+                    deployment.start_command,
+                    now,
+                    match deployment.access {
+                        RepositoryAccess::Account => "account",
+                        RepositoryAccess::DeployKey => "deployKey",
+                    },
+                    deployment.publish_dir
+                ],
+            )?;
+            Ok(now)
+        })
+        .await
+    }
+
+    /// Registra un despliegue en curso. Falla con `DeployInProgress` si ya hay uno.
+    pub async fn start_deploy_run(
+        &self,
+        id: ServiceId,
+        kind: DeployKind,
+        release: String,
+        branch: String,
+    ) -> Result<DeployRun, DbError> {
+        self.call(move |connection| {
+            let transaction = connection.transaction()?;
+            let running: i64 = transaction.query_row(
+                "SELECT count(*) FROM deploy_runs WHERE service_id = ?1 AND status = 'running'",
+                [id.0],
+                |row| row.get(0),
+            )?;
+            if running > 0 {
+                return Err(DbError::DeployInProgress);
+            }
+            let now = now();
+            transaction.execute(
+                "INSERT INTO deploy_runs (service_id, status, kind, release, branch, started_at) \
+                 VALUES (?1, 'running', ?2, ?3, ?4, ?5)",
+                params![id.0, kind_text(kind), release, branch, now],
+            )?;
+            let run = DeployRun {
+                id: transaction.last_insert_rowid(),
+                status: DeployStatus::Running,
+                kind,
+                release,
+                branch,
+                started_at: now,
+                finished_at: None,
+                detail: None,
+            };
+            transaction.commit()?;
+            Ok(run)
+        })
+        .await
+    }
+
+    pub async fn finish_deploy_run(
+        &self,
+        run: i64,
+        status: DeployStatus,
+        detail: Option<String>,
+    ) -> Result<(), DbError> {
+        self.call(move |connection| {
+            connection.execute(
+                "UPDATE deploy_runs SET status = ?2, finished_at = ?3, detail = ?4 WHERE id = ?1",
+                params![run, status_text(status), now(), detail],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Los últimos despliegues del servicio, del más reciente al más antiguo.
+    pub async fn deploy_runs(&self, id: ServiceId, limit: u32) -> Result<Vec<DeployRun>, DbError> {
+        self.call(move |connection| {
+            let mut statement = connection.prepare(
+                "SELECT id, status, kind, release, branch, started_at, finished_at, detail \
+                 FROM deploy_runs WHERE service_id = ?1 ORDER BY id DESC LIMIT ?2",
+            )?;
+            let rows = statement.query_map(params![id.0, limit], |row| {
+                Ok((
+                    (row.get::<_, i64>(0)?, row.get::<_, String>(1)?),
+                    (row.get::<_, String>(2)?, row.get::<_, String>(3)?),
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                ))
+            })?;
+            rows.map(|row| {
+                let ((id, status), (kind, release), branch, started_at, finished_at, detail) = row?;
+                Ok(DeployRun {
+                    id,
+                    status: parse_status(&status)?,
+                    kind: parse_kind(&kind)?,
+                    release,
+                    branch,
+                    started_at,
+                    finished_at,
+                    detail,
+                })
+            })
+            .collect()
+        })
+        .await
+    }
+
+    /// La versión `release` quedó activa (despliegue o rollback): la que lo era pasa a ser la
+    /// anterior, la del siguiente rollback.
+    pub async fn activate_release(&self, id: ServiceId, release: String) -> Result<(), DbError> {
+        self.call(move |connection| {
+            connection.execute(
+                "UPDATE services SET previous_release = active_release, active_release = ?2 \
+                 WHERE id = ?1 AND active_release IS NOT ?2",
+                params![id.0, release],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Versión activa y anterior del servicio.
+    pub async fn releases(&self, id: ServiceId) -> Result<Releases, DbError> {
+        self.call(move |connection| {
+            Ok(connection.query_row(
+                "SELECT active_release, previous_release FROM services WHERE id = ?1",
+                [id.0],
+                |row| {
+                    Ok(Releases {
+                        active: row.get(0)?,
+                        previous: row.get(1)?,
+                    })
+                },
+            )?)
+        })
+        .await
+    }
+
+    /// Rama con la que se construyó una versión.
+    pub async fn release_branch(
+        &self,
+        id: ServiceId,
+        release: String,
+    ) -> Result<Option<String>, DbError> {
+        self.call(move |connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT branch FROM deploy_runs WHERE service_id = ?1 AND release = ?2 \
+                     AND kind = 'deploy' LIMIT 1",
+                    params![id.0, release],
+                    |row| row.get(0),
+                )
+                .optional()?)
+        })
+        .await
+    }
+
+    /// Al arrancar el agente: los despliegues que quedaron «en curso» ya no tienen quien los
+    /// siga. Devuelve cuántos se marcaron.
+    pub async fn interrupt_running_deploys(&self) -> Result<usize, DbError> {
+        self.call(|connection| {
+            Ok(connection.execute(
+                "UPDATE deploy_runs SET status = 'failed', finished_at = ?1, \
+                 detail = 'interrumpido: el agente se reinició' WHERE status = 'running'",
+                [now()],
+            )?)
+        })
+        .await
+    }
+
+    /// Sitio del servicio, si tiene.
+    pub async fn site(&self, id: ServiceId) -> Result<Option<StoredSite>, DbError> {
+        self.call(move |connection| {
+            connection
+                .query_row(
+                    "SELECT template, domains, port, https, email, tls, tls_detail, updated_at \
+                     FROM sites WHERE service_id = ?1",
+                    [id.0],
+                    |row| {
+                        Ok((
+                            (row.get::<_, String>(0)?, row.get::<_, String>(1)?),
+                            row.get::<_, Option<u16>>(2)?,
+                            row.get::<_, bool>(3)?,
+                            row.get::<_, Option<String>>(4)?,
+                            (row.get::<_, String>(5)?, row.get::<_, Option<String>>(6)?),
+                            row.get::<_, i64>(7)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .map(
+                    |((template, domains), port, https, email, (tls, tls_detail), updated_at)| {
+                        let template = SiteTemplate::ALL
+                            .into_iter()
+                            .find(|known| known.file_stem() == template)
+                            .ok_or_else(|| DbError::Corrupt(format!("plantilla «{template}»")))?;
+                        let domains: Vec<String> = serde_json::from_str(&domains)
+                            .map_err(|error| DbError::Corrupt(format!("dominios: {error}")))?;
+                        Ok(StoredSite {
+                            config: SiteConfig {
+                                template,
+                                domains,
+                                port,
+                                https,
+                                email,
+                            },
+                            tls: parse_tls(&tls)?,
+                            tls_detail,
+                            updated_at,
+                        })
+                    },
+                )
+                .transpose()
+        })
+        .await
+    }
+
+    /// Primer dominio de `domains` que ya usa otro servicio.
+    pub async fn domain_in_use(
+        &self,
+        id: ServiceId,
+        domains: Vec<String>,
+    ) -> Result<Option<String>, DbError> {
+        self.call(move |connection| {
+            let mut statement = connection
+                .prepare("SELECT 1 FROM site_domains WHERE domain = ?1 AND service_id <> ?2")?;
+            for domain in domains {
+                if statement.exists(params![domain, id.0])? {
+                    return Ok(Some(domain));
+                }
+            }
+            Ok(None)
+        })
+        .await
+    }
+
+    /// Guarda (sustituye) el sitio y reserva sus dominios. Falla con `DomainInUse` si otro
+    /// servicio ya tiene alguno.
+    pub async fn save_site(
+        &self,
+        id: ServiceId,
+        config: SiteConfig,
+        tls: TlsStatus,
+    ) -> Result<i64, DbError> {
+        self.call(move |connection| {
+            let now = now();
+            let domains = serde_json::to_string(&config.domains)
+                .map_err(|error| DbError::Corrupt(format!("dominios: {error}")))?;
+            let transaction = connection.transaction()?;
+            transaction.execute("DELETE FROM site_domains WHERE service_id = ?1", [id.0])?;
+            for domain in &config.domains {
+                match transaction.execute(
+                    "INSERT INTO site_domains (domain, service_id) VALUES (?1, ?2)",
+                    params![domain, id.0],
+                ) {
+                    Ok(_) => {}
+                    Err(rusqlite::Error::SqliteFailure(error, _))
+                        if error.code == ErrorCode::ConstraintViolation =>
+                    {
+                        return Err(DbError::DomainInUse(domain.clone()));
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            transaction.execute(
+                "INSERT INTO sites (service_id, template, domains, port, https, email, tls, tls_detail, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8) \
+                 ON CONFLICT (service_id) DO UPDATE SET template = excluded.template, \
+                     domains = excluded.domains, port = excluded.port, https = excluded.https, \
+                     email = excluded.email, tls = excluded.tls, tls_detail = NULL, \
+                     updated_at = excluded.updated_at",
+                params![
+                    id.0,
+                    config.template.file_stem(),
+                    domains,
+                    config.port,
+                    config.https,
+                    config.email,
+                    tls_text(tls),
+                    now
+                ],
+            )?;
+            transaction.commit()?;
+            Ok(now)
+        })
+        .await
+    }
+
+    /// Estado del certificado del sitio.
+    pub async fn set_site_tls(
+        &self,
+        id: ServiceId,
+        tls: TlsStatus,
+        detail: Option<String>,
+    ) -> Result<(), DbError> {
+        self.call(move |connection| {
+            connection.execute(
+                "UPDATE sites SET tls = ?2, tls_detail = ?3, updated_at = ?4 WHERE service_id = ?1",
+                params![id.0, tls_text(tls), detail, now()],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Borra el sitio y libera sus dominios. Devuelve si existía.
+    pub async fn delete_site(&self, id: ServiceId) -> Result<bool, DbError> {
+        self.call(move |connection| {
+            let transaction = connection.transaction()?;
+            transaction.execute("DELETE FROM site_domains WHERE service_id = ?1", [id.0])?;
+            let deleted =
+                transaction.execute("DELETE FROM sites WHERE service_id = ?1", [id.0])? > 0;
+            transaction.commit()?;
+            Ok(deleted)
+        })
+        .await
+    }
+
+    /// Marca si el servicio debe estar en marcha (ver `autostart` en schema.sql).
+    pub async fn set_autostart(&self, slug: ServiceSlug, enabled: bool) -> Result<(), DbError> {
+        self.call(move |connection| {
+            connection.execute(
+                "UPDATE services SET autostart = ?1 WHERE slug = ?2",
+                rusqlite::params![enabled, slug.as_str()],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Servicios que deben estar en marcha.
+    pub async fn autostart_services(&self) -> Result<Vec<ServiceSlug>, DbError> {
+        self.call(|connection| {
+            let mut statement =
+                connection.prepare("SELECT slug FROM services WHERE autostart = 1 ORDER BY id")?;
+            let slugs = statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(slugs
+                .into_iter()
+                .filter_map(|slug| ServiceSlug::new(&slug).ok())
+                .collect())
+        })
+        .await
+    }
+
+    /// Devuelve si existía.
+    pub async fn delete_service_by_slug(&self, slug: ServiceSlug) -> Result<bool, DbError> {
+        self.call(move |connection| {
+            Ok(connection.execute("DELETE FROM services WHERE slug = ?1", [slug.as_str()])? > 0)
         })
         .await
     }
@@ -214,6 +662,7 @@ impl Database {
 fn service_row(row: &Row<'_>) -> rusqlite::Result<Result<Service, DbError>> {
     let slug: String = row.get(1)?;
     let name: String = row.get(2)?;
+    let description: String = row.get(3)?;
     let service = (|| {
         Ok(Service {
             id: ServiceId(row.get(0)?),
@@ -221,11 +670,80 @@ fn service_row(row: &Row<'_>) -> rusqlite::Result<Result<Service, DbError>> {
                 .map_err(|error| DbError::Corrupt(format!("slug «{slug}»: {error}")))?,
             name: ServiceName::new(&name)
                 .map_err(|error| DbError::Corrupt(format!("nombre «{name}»: {error}")))?,
-            created_at: row.get(3)?,
-            updated_at: row.get(4)?,
+            description: ServiceDescription::new(&description)
+                .map_err(|error| DbError::Corrupt(format!("descripción: {error}")))?,
+            created_at: row.get(4)?,
+            updated_at: row.get(5)?,
         })
     })();
     Ok(service)
+}
+
+fn status_text(status: DeployStatus) -> &'static str {
+    match status {
+        DeployStatus::Running => "running",
+        DeployStatus::Succeeded => "succeeded",
+        DeployStatus::Failed => "failed",
+    }
+}
+
+fn kind_text(kind: DeployKind) -> &'static str {
+    match kind {
+        DeployKind::Deploy => "deploy",
+        DeployKind::Rollback => "rollback",
+    }
+}
+
+fn parse_kind(raw: &str) -> Result<DeployKind, DbError> {
+    match raw {
+        "deploy" => Ok(DeployKind::Deploy),
+        "rollback" => Ok(DeployKind::Rollback),
+        other => Err(DbError::Corrupt(format!("tipo de despliegue «{other}»"))),
+    }
+}
+
+/// Sitio guardado de un servicio.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredSite {
+    pub config: SiteConfig,
+    pub tls: TlsStatus,
+    pub tls_detail: Option<String>,
+    pub updated_at: i64,
+}
+
+fn tls_text(tls: TlsStatus) -> &'static str {
+    match tls {
+        TlsStatus::Off => "off",
+        TlsStatus::Issuing => "issuing",
+        TlsStatus::Active => "active",
+        TlsStatus::Failed => "failed",
+    }
+}
+
+fn parse_tls(raw: &str) -> Result<TlsStatus, DbError> {
+    match raw {
+        "off" => Ok(TlsStatus::Off),
+        "issuing" => Ok(TlsStatus::Issuing),
+        "active" => Ok(TlsStatus::Active),
+        "failed" => Ok(TlsStatus::Failed),
+        other => Err(DbError::Corrupt(format!("estado TLS «{other}»"))),
+    }
+}
+
+/// Versión activa y anterior de un servicio (ver `active_release` en schema.sql).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Releases {
+    pub active: Option<String>,
+    pub previous: Option<String>,
+}
+
+fn parse_status(raw: &str) -> Result<DeployStatus, DbError> {
+    match raw {
+        "running" => Ok(DeployStatus::Running),
+        "succeeded" => Ok(DeployStatus::Succeeded),
+        "failed" => Ok(DeployStatus::Failed),
+        other => Err(DbError::Corrupt(format!("estado de despliegue «{other}»"))),
+    }
 }
 
 fn ensure_schema(connection: &mut Connection) -> Result<(), DbError> {
@@ -319,10 +837,105 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sitios_y_dominios_unicos() {
+        let db = Database::open_in_memory().unwrap();
+        let web = db
+            .insert_service(slug("web"), name("Web"), ServiceDescription::default())
+            .await
+            .unwrap();
+        let api = db
+            .insert_service(slug("api"), name("API"), ServiceDescription::default())
+            .await
+            .unwrap();
+        let config = |domains: &[&str]| SiteConfig {
+            template: SiteTemplate::Spa,
+            domains: domains.iter().map(|domain| (*domain).to_owned()).collect(),
+            port: None,
+            https: true,
+            email: Some("ops@example.com".into()),
+        };
+        assert_eq!(db.site(web.id).await.unwrap(), None);
+        db.save_site(
+            web.id,
+            config(&["example.com", "www.example.com"]),
+            TlsStatus::Issuing,
+        )
+        .await
+        .unwrap();
+        let site = db.site(web.id).await.unwrap().unwrap();
+        assert_eq!(site.config, config(&["example.com", "www.example.com"]));
+        assert_eq!(site.tls, TlsStatus::Issuing);
+
+        // Otro servicio no puede quedarse un dominio en uso…
+        assert_eq!(
+            db.domain_in_use(
+                api.id,
+                vec!["api.example.com".into(), "www.example.com".into()]
+            )
+            .await
+            .unwrap()
+            .as_deref(),
+            Some("www.example.com")
+        );
+        assert!(matches!(
+            db.save_site(api.id, config(&["www.example.com"]), TlsStatus::Off).await,
+            Err(DbError::DomainInUse(domain)) if domain == "www.example.com"
+        ));
+        // …pero sí cuando el primero lo libera.
+        db.save_site(web.id, config(&["example.com"]), TlsStatus::Off)
+            .await
+            .unwrap();
+        db.save_site(api.id, config(&["www.example.com"]), TlsStatus::Off)
+            .await
+            .unwrap();
+
+        db.set_site_tls(web.id, TlsStatus::Failed, Some("dns".into()))
+            .await
+            .unwrap();
+        let site = db.site(web.id).await.unwrap().unwrap();
+        assert_eq!(
+            (site.tls, site.tls_detail.as_deref()),
+            (TlsStatus::Failed, Some("dns"))
+        );
+        assert!(db.delete_site(web.id).await.unwrap());
+        assert_eq!(
+            db.domain_in_use(api.id, vec!["example.com".into()])
+                .await
+                .unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn arranque_automatico() {
+        let db = Database::open_in_memory().unwrap();
+        for service in ["api", "web", "bot"] {
+            db.insert_service(slug(service), name(service), ServiceDescription::default())
+                .await
+                .unwrap();
+        }
+        assert!(db.autostart_services().await.unwrap().is_empty());
+        db.set_autostart(slug("bot"), true).await.unwrap();
+        db.set_autostart(slug("api"), true).await.unwrap();
+        db.set_autostart(slug("web"), true).await.unwrap();
+        db.set_autostart(slug("web"), false).await.unwrap();
+        assert_eq!(
+            db.autostart_services().await.unwrap(),
+            [slug("api"), slug("bot")]
+        );
+    }
+
+    #[tokio::test]
     async fn alta_consulta_y_baja() {
         let db = Database::open_in_memory().unwrap();
-        let api = db.insert_service(slug("api"), name("API")).await.unwrap();
-        let web = db.insert_service(slug("web"), name("Web")).await.unwrap();
+        let api = db
+            .insert_service(slug("api"), name("API"), ServiceDescription::default())
+            .await
+            .unwrap();
+        let web = db
+            .insert_service(slug("web"), name("Web"), ServiceDescription::default())
+            .await
+            .unwrap();
 
         assert_eq!(db.services().await.unwrap(), [api.clone(), web.clone()]);
         assert_eq!(db.service(api.id).await.unwrap(), Some(api.clone()));
@@ -338,20 +951,134 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn despliegue_se_guarda_y_se_borra_con_el_servicio() {
+        let db = Database::open_in_memory().unwrap();
+        let service = db
+            .insert_service(slug("api"), name("API"), ServiceDescription::default())
+            .await
+            .unwrap();
+        assert_eq!(db.deployment(service.id).await.unwrap(), None);
+        let deployment = UpdateDeployment {
+            repository: Some(RepositoryRef {
+                owner: "o".into(),
+                name: "r".into(),
+                branch: "main".into(),
+            }),
+            access: RepositoryAccess::DeployKey,
+            setup_commands: vec!["npm ci".into(), "npm run build".into()],
+            start_command: "npm start".into(),
+            publish_dir: Some("dist".into()),
+        };
+        db.set_deployment(service.id, deployment.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            db.deployment(service.id).await.unwrap().unwrap().0,
+            deployment
+        );
+        // Sustituir, también quitando el repositorio.
+        let without = UpdateDeployment {
+            repository: None,
+            ..deployment
+        };
+        db.set_deployment(service.id, without.clone())
+            .await
+            .unwrap();
+        assert_eq!(db.deployment(service.id).await.unwrap().unwrap().0, without);
+
+        assert!(db.delete_service(service.id).await.unwrap());
+        assert_eq!(db.deployment(service.id).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn historial_de_despliegues() {
+        let db = Database::open_in_memory().unwrap();
+        let service = db
+            .insert_service(slug("api"), name("API"), ServiceDescription::default())
+            .await
+            .unwrap();
+        let release = |n: u32| format!("r{n:010}-000000000");
+        let first = db
+            .start_deploy_run(service.id, DeployKind::Deploy, release(1), "main".into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            db.start_deploy_run(service.id, DeployKind::Deploy, release(2), "main".into())
+                .await,
+            Err(DbError::DeployInProgress)
+        ));
+        db.finish_deploy_run(first.id, DeployStatus::Failed, Some("exit 1".into()))
+            .await
+            .unwrap();
+        let second = db
+            .start_deploy_run(service.id, DeployKind::Rollback, release(3), "dev".into())
+            .await
+            .unwrap();
+        assert_eq!(db.interrupt_running_deploys().await.unwrap(), 1);
+        let runs = db.deploy_runs(service.id, 10).await.unwrap();
+        assert_eq!(
+            runs.iter().map(|run| run.id).collect::<Vec<_>>(),
+            [second.id, first.id]
+        );
+        assert_eq!(runs[0].status, DeployStatus::Failed);
+        assert_eq!(runs[0].kind, DeployKind::Rollback);
+        assert_eq!(runs[1].release, release(1));
+        assert_eq!(runs[1].detail.as_deref(), Some("exit 1"));
+        assert_eq!(
+            db.release_branch(service.id, release(1))
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("main")
+        );
+    }
+
+    /// La versión activa pasa a ser la anterior al activar otra; repetir la activa no la pierde.
+    #[tokio::test]
+    async fn version_activa_y_anterior() {
+        let db = Database::open_in_memory().unwrap();
+        let service = db
+            .insert_service(slug("api"), name("API"), ServiceDescription::default())
+            .await
+            .unwrap();
+        let release = |n: u32| format!("r{n:010}-000000000");
+        assert_eq!(db.releases(service.id).await.unwrap(), Releases::default());
+        db.activate_release(service.id, release(1)).await.unwrap();
+        db.activate_release(service.id, release(2)).await.unwrap();
+        let releases = db.releases(service.id).await.unwrap();
+        assert_eq!(releases.active, Some(release(2)));
+        assert_eq!(releases.previous, Some(release(1)));
+        // Rollback: vuelve a la 1 y la 2 queda como anterior.
+        db.activate_release(service.id, release(1)).await.unwrap();
+        db.activate_release(service.id, release(1)).await.unwrap();
+        let releases = db.releases(service.id).await.unwrap();
+        assert_eq!(releases.active, Some(release(1)));
+        assert_eq!(releases.previous, Some(release(2)));
+    }
+
+    #[tokio::test]
     async fn los_ids_borrados_no_se_reutilizan() {
         let db = Database::open_in_memory().unwrap();
-        let first = db.insert_service(slug("a"), name("A")).await.unwrap();
+        let first = db
+            .insert_service(slug("a"), name("A"), ServiceDescription::default())
+            .await
+            .unwrap();
         db.delete_service(first.id).await.unwrap();
-        let second = db.insert_service(slug("a"), name("A")).await.unwrap();
+        let second = db
+            .insert_service(slug("a"), name("A"), ServiceDescription::default())
+            .await
+            .unwrap();
         assert!(second.id > first.id);
     }
 
     #[tokio::test]
     async fn slug_unico() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_service(slug("api"), name("API")).await.unwrap();
+        db.insert_service(slug("api"), name("API"), ServiceDescription::default())
+            .await
+            .unwrap();
         let error = db
-            .insert_service(slug("api"), name("Otra"))
+            .insert_service(slug("api"), name("Otra"), ServiceDescription::default())
             .await
             .unwrap_err();
         assert!(
@@ -409,7 +1136,11 @@ mod tests {
                 .build()
                 .unwrap();
             runtime
-                .block_on(db.insert_service(slug("api"), name("API")))
+                .block_on(db.insert_service(
+                    slug("api"),
+                    name("API"),
+                    ServiceDescription::default(),
+                ))
                 .unwrap();
         }
         let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;

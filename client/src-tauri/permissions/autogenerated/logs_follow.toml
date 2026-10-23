@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-logs-follow"
+description = "Enables the logs_follow command without any pre-configured scope."
+commands.allow = ["logs_follow"]
+
+[[permission]]
+identifier = "deny-logs-follow"
+description = "Denies the logs_follow command without any pre-configured scope."
+commands.deny = ["logs_follow"]

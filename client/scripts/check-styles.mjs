@@ -7,6 +7,7 @@
 // 3. Todo `var(--x)` usado existe (en tokens.css, en el tema de referencia o en el mismo archivo).
 // 4. Todos los temas declaran exactamente las variables del tema de referencia (light.css),
 //    están registrados en themes.ts e importados en global.css.
+// 5. Las media queries de ancho/alto solo usan los puntos de corte documentados (BREAKPOINTS).
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { basename, extname, join, relative } from 'node:path';
@@ -33,6 +34,8 @@ const TOKEN_ONLY_PROPERTY =
     /^(?:font-family|font-size|font-weight|line-height|font|z-index|box-shadow|text-shadow|border-radius|border-(?:top|bottom)-(?:left|right)-radius|border-(?:start|end)-(?:start|end)-radius|(?:padding|margin)(?:-(?:top|right|bottom|left|block|inline)(?:-(?:start|end))?)?|gap|row-gap|column-gap|inset|top|right|bottom|left)$/;
 const TIMED_PROPERTY =
     /^(?:transition|transition-duration|transition-delay|animation|animation-duration|animation-delay)$/;
+/** Puntos de corte (styles.md, «Tamaños de ventana»). CSS no admite var() en @media. */
+const BREAKPOINTS = new Set(['48rem']);
 const KEYWORDS = new Set(['0', 'auto', 'none', 'inherit', 'initial', 'unset', 'revert', 'normal', '100%', '50%']);
 
 /** Un valor es válido si, quitando tokens y multiplicadores de calc(), solo quedan palabras clave. */
@@ -126,6 +129,17 @@ for (const file of walk(SRC).filter((f) => ['.css', '.svelte'].includes(extname(
     const localVariables = declaredVariables(file);
 
     for (const { css, offset } of cssBlocks(file, text)) {
+        for (const media of css.matchAll(/@media([^{]*)\{/g)) {
+            for (const size of media[1].matchAll(/(?:min|max)-(?:width|height)\s*:\s*([^)\s]+)/g)) {
+                if (!BREAKPOINTS.has(size[1])) {
+                    report(
+                        file,
+                        lineAt(text, offset + media.index),
+                        `punto de corte «${size[1]}» no documentado: use ${[...BREAKPOINTS].join(', ')} (styles.md, «Tamaños de ventana»)`,
+                    );
+                }
+            }
+        }
         for (const { property, value, index } of declarations(css)) {
             const line = lineAt(text, offset + index);
             const where = `${property}: ${value}`;

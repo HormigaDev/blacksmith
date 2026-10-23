@@ -10,6 +10,11 @@ export interface TauriCall {
     args: Record<string, unknown> | undefined;
 }
 
+/** Respuesta del agente para `agent_request` (lo que devuelve el comando de Rust). */
+export function agentJson(body: unknown, status = 200) {
+    return { status, contentType: 'application/json', retryAfter: null, requestId: 'e2e', body: JSON.stringify(body) };
+}
+
 /** Respuesta por comando, p. ej. `{ 'plugin:dialog|open': '/home/ana/key.pem' }`. */
 export type TauriResponses = Record<string, unknown>;
 
@@ -47,7 +52,19 @@ export async function mockTauri(page: Page, overrides: TauriResponses = {}): Pro
                     return args?.handler;
                 }
                 if (cmd === 'plugin:event|unlisten') return null;
-                return cmd in responses ? responses[cmd] : null;
+                // `agent_request` puede responder según la ruta de la API: `{ byPath: { '/api/v1/…': … } }`.
+                const response = cmd in responses ? responses[cmd] : null;
+                if (
+                    cmd === 'agent_request' &&
+                    typeof response === 'object' &&
+                    response !== null &&
+                    'byPath' in response
+                ) {
+                    const request = (args as { request?: { method?: string; path?: string } } | undefined)?.request;
+                    const byPath = (response as { byPath: Record<string, unknown> }).byPath;
+                    return byPath[`${request?.method} ${request?.path}`] ?? byPath[request?.path ?? ''] ?? null;
+                }
+                return response;
             },
         };
 

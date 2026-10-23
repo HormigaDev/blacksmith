@@ -1,7 +1,17 @@
 import { t } from '$lib/i18n';
 import { TunnelError } from '$lib/ssh/errors';
 
-import { AbortedError, HttpError, NetworkError, ResponseFormatError, TimeoutError } from './client';
+import {
+    AbortedError,
+    API_ERROR_CODES,
+    type ApiErrorCode,
+    HttpError,
+    NetworkError,
+    ResponseFormatError,
+    TimeoutError,
+} from './client';
+
+const isApiErrorCode = (code: string): code is ApiErrorCode => (API_ERROR_CODES as readonly string[]).includes(code);
 
 /**
  * Mensaje traducido para mostrar al usuario a partir de cualquier error capturado.
@@ -10,9 +20,16 @@ import { AbortedError, HttpError, NetworkError, ResponseFormatError, TimeoutErro
  * los del túnel SSH (`errors.tunnel.<CODE>`).
  */
 export function describeError(error: unknown): string {
-    if (error instanceof TunnelError) return t(`errors.tunnel.${error.code}`, { port: error.port ?? 0 });
+    if (error instanceof TunnelError) {
+        // El agente rechazó la conexión (p. ej. un WebSocket): se traduce por su código.
+        const agentCode = error.agent?.code;
+        if (agentCode !== undefined && isApiErrorCode(agentCode)) return t(`errors.agent.${agentCode}`);
+        return t(`errors.tunnel.${error.code}`, { port: error.port ?? 0 });
+    }
     if (error instanceof HttpError) return t(`errors.agent.${error.code}`);
     if (error instanceof TimeoutError) return t('errors.timeout');
+    // El transporte del agente (Rust) falló antes de llegar: servidor desconectado, túnel caído…
+    if (error instanceof NetworkError && error.cause instanceof TunnelError) return describeError(error.cause);
     if (error instanceof NetworkError) return t('errors.network');
     if (error instanceof ResponseFormatError || error instanceof AbortedError) return t('errors.unexpected');
     return t('errors.unexpected');

@@ -120,7 +120,52 @@ color nuevo: primero en `light.css`, después en todos los demás temas.
   información crítica.
 - El movimiento usa `--duration-*`, que valen `0ms` con `prefers-reduced-motion`.
 
-## 5. Estructura del proyecto
+## 5. Marco fijo de la ventana (obligatorio)
+
+Blacksmith es una aplicación de escritorio, no una web: **la ventana nunca se desplaza entera**.
+El marco (`AppShell`: barra lateral, barra de título con los controles de ventana) queda siempre
+fijo y visible; solo hacen scroll las zonas de contenido. Una página que empuja el marco fuera
+de la pantalla es un fallo grave, aunque «funcione».
+
+- El documento no tiene scroll: `html { overflow: hidden }` y `body { overflow: clip }` en
+  `base.css`. No se cambia.
+- `AppShell` está fijado a la ventana (`position: fixed; inset: 0`) y todas sus pistas de
+  rejilla están acotadas (`minmax(0, 1fr)`, nunca una fila implícita `auto`), con
+  `min-height: 0` y `overflow: hidden` en sus columnas. WebKitGTK (el motor de Tauri en Linux)
+  deja que una fila `auto` crezca con el contenido aunque Chromium no lo haga: **que se vea bien
+  en Chromium no prueba nada**.
+- Solo hacen scroll contenedores explícitos (`overflow: auto` + `min-height: 0`): el contenido de
+  la página (`.content`) y listas largas (la de servidores). Un componente nuevo con scroll
+  propio sigue el mismo patrón y usa `overscroll-behavior: contain`.
+- Nada debe desbordar sin querer un contenedor con scroll (márgenes negativos, subrayados que se
+  salen…): aparece una barra de scroll falsa. Si un elemento necesita salirse, se dibuja dentro
+  (sombra interior, `outline-offset` negativo).
+- Overlays (diálogos, menús, toasts) van en portal con `position: fixed`; nunca estiran el
+  documento.
+- Lo verifica el E2E «el marco queda fijo» (`e2e/app/tauri.spec.ts`), que también corre en
+  WebKit. Cualquier página nueva alta debe probarse con la ventana baja (p. ej. 1024×480).
+
+### Tamaños de ventana
+
+La interfaz funciona a **cualquier tamaño**, de un móvil (futura PWA) a una pantalla grande.
+No se confía en el tamaño mínimo de la ventana: los gestores de ventanas en mosaico de Linux lo
+ignoran, y GTK entonces recorta el webview en lugar de redimensionarlo. Por eso el mínimo de
+`tauri.conf.json` es bajo (360×520) y el diseño se adapta.
+
+- Un único punto de corte, **compacto: `@media (max-width: 48rem)`**. CSS no admite `var()` en
+  las media queries; `check:styles` rechaza cualquier otro valor.
+- En compacto, `AppShell` pasa a una columna: la barra lateral es un panel superpuesto que se
+  abre con el botón de menú de la barra de título.
+- Nada de anchos mínimos fijos que desborden: rejillas con
+  `minmax(min(100%, var(--layout-card-min-width)), 1fr)` y anchos con `min(100%, …)`. Las
+  cabeceras con acciones usan `flex-wrap`.
+- Se prueba con ventana estrecha (≈ 400 px) y baja (≈ 480 px), no solo a 1280×800.
+
+antes de dar una pantalla por terminada, pregúntate si como cliente
+aceptarías la app así (marco que se mueve, controles fuera de la vista, barras de scroll
+falsas, textos truncados). Si la respuesta es no, no está terminada.
+
+## 6. Estructura del proyecto
 
 ```
 src/
@@ -153,7 +198,7 @@ src/
 - La webview no hace peticiones de red (la CSP solo permite IPC). Todo acceso al agente pasa por
   comandos de Tauri en Rust.
 
-## 6. Antes de dar un cambio por terminado
+## 7. Antes de dar un cambio por terminado
 
 ```sh
 cd client

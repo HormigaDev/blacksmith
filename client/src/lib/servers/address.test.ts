@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { serverAddress, serverHref } from './address';
+import { serverAddress, serverHref, serviceHref } from './address';
 
 describe('serverAddress', () => {
     test('SSH: sin el puerto por defecto', () => {
@@ -29,4 +29,8 @@ describe('serverHref', () => {
             expect(decodeURIComponent(href.slice('/servers/'.length))).toBe(id);
         }
     });
+});
+
+test('serviceHref: anida el servicio en la ruta del servidor', () => {
+    expect(serviceHref('local:4040', 'mi-api')).toBe('/servers/local%3A4040/services/mi-api');
 });

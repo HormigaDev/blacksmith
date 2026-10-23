@@ -74,6 +74,8 @@ pub enum Operation {
     ShowMainPid,
     /// `show -p LoadState -p ActiveState -p SubState -p MainPID`.
     ShowStatus,
+    /// `show -p EnvironmentFiles`.
+    ShowEnvironmentFiles,
 }
 
 impl Operation {
@@ -82,7 +84,7 @@ impl Operation {
             Self::Start => "start",
             Self::Stop => "stop",
             Self::Restart => "restart",
-            Self::ShowMainPid | Self::ShowStatus => "show",
+            Self::ShowMainPid | Self::ShowStatus | Self::ShowEnvironmentFiles => "show",
         }
     }
 }
@@ -224,6 +226,15 @@ impl Systemctl {
         }
     }
 
+    /// El mismo programa contra el systemd del sistema (nginx y certbot lo son también cuando
+    /// los servicios van en el del usuario).
+    pub fn system(&self) -> Self {
+        Self {
+            scope: Scope::System,
+            ..self.clone()
+        }
+    }
+
     pub async fn start(&self, unit: &UnitName) -> Result<Outcome, SystemctlError> {
         self.run(Action::Start, unit).await
     }
@@ -324,6 +335,46 @@ impl Systemctl {
             unit: unit.clone(),
             output: String::from_utf8_lossy(&execution.stdout).into_owned(),
         })
+    }
+
+    /// Archivos `EnvironmentFile=` que systemd cargará al arrancar la unidad (de la unidad y de
+    /// sus drop-ins, con los especificadores como `%N` ya resueltos). Vacío si no tiene ninguno
+    /// o la unidad no existe. No requiere polkit.
+    pub async fn environment_files(&self, unit: &UnitName) -> Result<Vec<PathBuf>, SystemctlError> {
+        let operation = Operation::ShowEnvironmentFiles;
+        let timeout = self.timeout.min(QUERY_TIMEOUT);
+        let execution = self
+            .execute(operation, &["-p", "EnvironmentFiles"], unit, timeout)
+            .await?;
+        if !execution.status.success() {
+            return Err(classify(
+                operation,
+                unit,
+                execution.status,
+                &execution.stderr,
+            ));
+        }
+        parse_environment_files(&execution.stdout).ok_or_else(|| SystemctlError::UnexpectedOutput {
+            operation,
+            unit: unit.clone(),
+            output: String::from_utf8_lossy(&execution.stdout).into_owned(),
+        })
+    }
+
+    /// Como [`Systemctl::run`] con otro tiempo máximo: para `Type=oneshot` largos (despliegues),
+    /// `start` espera a que el trabajo termine y su resultado es el del trabajo.
+    pub async fn run_with_timeout(
+        &self,
+        action: Action,
+        unit: &UnitName,
+        timeout: Duration,
+    ) -> Result<Outcome, SystemctlError> {
+        Self {
+            timeout,
+            ..self.clone()
+        }
+        .run(action, unit)
+        .await
     }
 
     async fn execute(
@@ -458,6 +509,21 @@ fn parse_status(stdout: &[u8]) -> Option<UnitStatus> {
         sub_state: sub_state.to_owned(),
         main_pid: parse_main_pid(pid?.as_bytes())?,
     })
+}
+
+/// Una línea por archivo: `EnvironmentFiles=/ruta (ignore_errors=yes)`. Sin archivos, nada.
+fn parse_environment_files(stdout: &[u8]) -> Option<Vec<PathBuf>> {
+    std::str::from_utf8(stdout)
+        .ok()?
+        .lines()
+        .map(|line| {
+            let value = line.strip_prefix("EnvironmentFiles=")?;
+            let path = value
+                .strip_suffix(" (ignore_errors=yes)")
+                .or_else(|| value.strip_suffix(" (ignore_errors=no)"))?;
+            path.starts_with('/').then(|| PathBuf::from(path))
+        })
+        .collect()
 }
 
 fn parse_load_state(raw: &str) -> Option<LoadState> {
@@ -612,6 +678,33 @@ mod tests {
         ] {
             assert_eq!(
                 parse_status(raw),
+                None,
+                "{:?}",
+                String::from_utf8_lossy(raw)
+            );
+        }
+    }
+
+    // Salidas reales de systemd 255.
+    #[test]
+    fn archivos_de_entorno() {
+        assert_eq!(parse_environment_files(b""), Some(vec![]));
+        assert_eq!(
+            parse_environment_files(
+                b"EnvironmentFiles=/etc/default/anacron (ignore_errors=no)\nEnvironmentFiles=/etc/bbel/env/bbel-api.env (ignore_errors=yes)\n"
+            ),
+            Some(vec![
+                PathBuf::from("/etc/default/anacron"),
+                PathBuf::from("/etc/bbel/env/bbel-api.env")
+            ])
+        );
+        for raw in [
+            &b"EnvironmentFiles=/x\n"[..],
+            b"Otra=/x (ignore_errors=no)\n",
+            b"EnvironmentFiles=relativa (ignore_errors=no)\n",
+        ] {
+            assert_eq!(
+                parse_environment_files(raw),
                 None,
                 "{:?}",
                 String::from_utf8_lossy(raw)

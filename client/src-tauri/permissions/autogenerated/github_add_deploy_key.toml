@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-github-add-deploy-key"
+description = "Enables the github_add_deploy_key command without any pre-configured scope."
+commands.allow = ["github_add_deploy_key"]
+
+[[permission]]
+identifier = "deny-github-add-deploy-key"
+description = "Denies the github_add_deploy_key command without any pre-configured scope."
+commands.deny = ["github_add_deploy_key"]

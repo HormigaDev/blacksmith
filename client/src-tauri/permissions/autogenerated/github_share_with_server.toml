@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-github-share-with-server"
+description = "Enables the github_share_with_server command without any pre-configured scope."
+commands.allow = ["github_share_with_server"]
+
+[[permission]]
+identifier = "deny-github-share-with-server"
+description = "Denies the github_share_with_server command without any pre-configured scope."
+commands.deny = ["github_share_with_server"]

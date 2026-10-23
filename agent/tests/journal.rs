@@ -136,6 +136,10 @@ async fn una_linea_invalida_no_corta_el_flujo() {
 
 #[tokio::test]
 async fn programa_inexistente() {
+    // El script falso se escribe antes de cualquier `fork`: si este test lanzara un proceso
+    // mientras otro lo escribe, el hijo heredaría el descriptor de escritura y ejecutar el
+    // script fallaría con ETXTBSY.
+    fake();
     let result = Journalctl::new("/no/existe/journalctl", Scope::System)
         .follow(&UnitName::new("x").unwrap(), 10);
     assert!(matches!(result, Err(JournalError::Spawn(_))));

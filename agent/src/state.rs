@@ -5,9 +5,11 @@ use tokio::sync::{Semaphore, watch};
 use crate::{
     config::Config,
     db::Database,
+    deploy::Paths,
+    nginx::SiteManager,
     routes::logs::LogTimings,
     services::ServiceManager,
-    systemd::{DEFAULT_TIMEOUT, Journalctl, SYSTEMCTL_PATH, Scope, Systemctl},
+    systemd::{DEFAULT_TIMEOUT, JOURNALCTL_PATH, Journalctl, SYSTEMCTL_PATH, Systemctl},
 };
 
 /// Margen para que una acción que se agota responda `SYSTEMD_TIMEOUT` (con su diagnóstico)
@@ -21,6 +23,8 @@ pub struct AppState {
     pub db: Database,
     /// Única vía para actuar sobre servicios: solo los registrados en `db`.
     pub services: ServiceManager,
+    /// Sitios de nginx de los servicios.
+    pub sites: SiteManager,
     pub journal: Journalctl,
     /// Cupos de flujos de logs simultáneos (`BLACKSMITH_MAX_LOG_STREAMS`).
     pub log_streams: Arc<Semaphore>,
@@ -29,28 +33,40 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(config: Arc<Config>, db: Database) -> Self {
+    pub fn new(config: Arc<Config>, db: Database, paths: Paths) -> Self {
         let timeout = config
             .request_timeout
             .saturating_sub(ACTION_MARGIN)
             .clamp(Duration::from_secs(1), DEFAULT_TIMEOUT);
-        let systemctl = Systemctl::new(SYSTEMCTL_PATH, Scope::System, timeout);
-        Self::with_commands(config, db, systemctl, Journalctl::default())
+        let scope = config.systemd_scope;
+        let systemctl = Systemctl::new(SYSTEMCTL_PATH, scope, timeout);
+        let journal = Journalctl::new(JOURNALCTL_PATH, scope);
+        Self::with_commands(config, db, systemctl, journal, paths)
     }
 
-    /// Con otros `systemctl` y `journalctl` (tests).
+    /// Con otros `systemctl`, `journalctl` y rutas (tests).
     pub fn with_commands(
         config: Arc<Config>,
         db: Database,
         systemctl: Systemctl,
         journal: Journalctl,
+        paths: Paths,
     ) -> Self {
-        let services = ServiceManager::new(db.clone(), systemctl);
+        // nginx y certbot son del systemd del sistema, también en modo local.
+        let sites = SiteManager::new(
+            db.clone(),
+            systemctl.system(),
+            JOURNALCTL_PATH,
+            paths.clone(),
+            config.bind_addr.port(),
+        );
+        let services = ServiceManager::new(db.clone(), systemctl, paths);
         let log_streams = Arc::new(Semaphore::new(config.max_log_streams));
         Self {
             config,
             db,
             services,
+            sites,
             journal,
             log_streams,
             log_timings: LogTimings::default(),

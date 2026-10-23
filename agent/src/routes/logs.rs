@@ -17,7 +17,8 @@ use std::time::Duration;
 use axum::{
     body::Bytes,
     extract::{
-        State,
+        Query, State,
+        rejection::QueryRejection,
         ws::{
             CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code,
             rejection::WebSocketUpgradeRejection,
@@ -65,13 +66,37 @@ const MAX_INCOMING: usize = 4 * 1024;
 /// Lo que puede acumularse sin enviar antes de que el envío falle.
 const MAX_WRITE_BUFFER: usize = 1024 * 1024;
 
+/// `?source=deploy`: los logs de `bbel-deploy@<nombre>` (salida de los despliegues) en lugar de
+/// los del servicio.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct LogsQuery {
+    #[serde(default)]
+    source: LogSource,
+}
+
+#[derive(Debug, Default, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogSource {
+    #[default]
+    Service,
+    Deploy,
+}
+
 pub async fn stream(
     State(state): State<AppState>,
     Path(name): Path<String>,
+    query: Result<Query<LogsQuery>, QueryRejection>,
     upgrade: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
 ) -> AppResult<Response> {
     let upgrade = upgrade?;
-    let unit = state.services.unit_of(&slug(&name)?).await?;
+    let Query(query) =
+        query.map_err(|rejection| AppError::BadRequest(rejection.body_text().into()))?;
+    let slug = slug(&name)?;
+    state.services.unit_of(&slug).await?;
+    let unit = match query.source {
+        LogSource::Service => slug.unit(),
+        LogSource::Deploy => slug.deploy_unit(),
+    };
     let permit = state
         .log_streams
         .clone()

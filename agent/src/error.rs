@@ -23,6 +23,9 @@ use axum::{
 use shared::{ApiErrorBody, ErrorCode};
 
 use crate::{
+    envfile::EnvFileError,
+    github::GitHubAccessError,
+    nginx::SiteError,
     services::ServiceError,
     systemd::{JournalError, SystemctlError},
 };
@@ -43,6 +46,9 @@ pub enum AppError {
 
     #[error(transparent)]
     Service(#[from] ServiceError),
+
+    #[error(transparent)]
+    Site(#[from] SiteError),
 
     #[error("se requiere un handshake WebSocket")]
     WebSocketRequired(#[from] WebSocketUpgradeRejection),
@@ -100,6 +106,7 @@ impl AppError {
             Self::InvalidJson(rejection) => rejection.status(),
             Self::InvalidPath(_) => StatusCode::BAD_REQUEST,
             Self::Service(error) => service_error(error).0,
+            Self::Site(error) => site_error(error).0,
             Self::WebSocketRequired(_) => StatusCode::UPGRADE_REQUIRED,
             Self::LogStreamLimit(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Journal(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -129,6 +136,10 @@ impl AppError {
             Self::Service(error) => {
                 let (_, code, message) = service_error(&error);
                 (code, message.into())
+            }
+            Self::Site(error) => {
+                let (_, code) = site_error(&error);
+                (code, DisplayChain(&error).to_string().into())
             }
             Self::WebSocketRequired(rejection) => (
                 ErrorCode::WebSocketRequired,
@@ -166,6 +177,21 @@ impl AppError {
 }
 
 /// Estado, código y mensaje de diagnóstico de un error de servicio.
+fn site_error(error: &SiteError) -> (StatusCode, ErrorCode) {
+    match error {
+        SiteError::NotRegistered(_) => (StatusCode::NOT_FOUND, ErrorCode::ServiceNotFound),
+        SiteError::Invalid(_) => (StatusCode::BAD_REQUEST, ErrorCode::InvalidSite),
+        // Una plantilla del administrador mal escrita: nada que corregir desde el cliente.
+        SiteError::Template(_) => (StatusCode::UNPROCESSABLE_ENTITY, ErrorCode::InvalidSite),
+        SiteError::DomainInUse(_) => (StatusCode::CONFLICT, ErrorCode::DomainInUse),
+        SiteError::Rejected(_) => (StatusCode::UNPROCESSABLE_ENTITY, ErrorCode::NginxRejected),
+        SiteError::Unavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, ErrorCode::NginxUnavailable),
+        SiteError::File(_) | SiteError::Database(_) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, ErrorCode::Internal)
+        }
+    }
+}
+
 fn service_error(error: &ServiceError) -> (StatusCode, ErrorCode, String) {
     use SystemctlError as E;
 
@@ -209,6 +235,54 @@ fn service_error(error: &ServiceError) -> (StatusCode, ErrorCode, String) {
                 message,
             ),
         },
+        ServiceError::Invalid(_) => (StatusCode::BAD_REQUEST, ErrorCode::BadRequest, message),
+        ServiceError::AlreadyExists(_) => (
+            StatusCode::CONFLICT,
+            ErrorCode::ServiceAlreadyExists,
+            message,
+        ),
+        ServiceError::Env(EnvFileError::Invalid(_)) => (
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidEnvironment,
+            message,
+        ),
+        ServiceError::RepositoryLocked => {
+            (StatusCode::CONFLICT, ErrorCode::RepositoryLocked, message)
+        }
+        ServiceError::DeploymentIncomplete(_) => (
+            StatusCode::CONFLICT,
+            ErrorCode::DeploymentIncomplete,
+            message,
+        ),
+        ServiceError::DeployKeyMissing => {
+            (StatusCode::CONFLICT, ErrorCode::DeployKeyMissing, message)
+        }
+        ServiceError::DeployInProgress => {
+            (StatusCode::CONFLICT, ErrorCode::DeployInProgress, message)
+        }
+        ServiceError::NotDeployed => (StatusCode::CONFLICT, ErrorCode::NotDeployed, message),
+        ServiceError::NothingToRun => (StatusCode::CONFLICT, ErrorCode::NothingToRun, message),
+        ServiceError::NothingToRollBack => {
+            (StatusCode::CONFLICT, ErrorCode::NothingToRollBack, message)
+        }
+        ServiceError::GitHub(GitHubAccessError::InvalidLogin | GitHubAccessError::InvalidToken) => {
+            (StatusCode::BAD_REQUEST, ErrorCode::BadRequest, message)
+        }
+        ServiceError::File(_) | ServiceError::GitHub(_) | ServiceError::DeployKey(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ErrorCode::Internal,
+            message,
+        ),
+        ServiceError::InvalidDeployment(_) => (
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidDeployment,
+            message,
+        ),
+        ServiceError::Env(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ErrorCode::EnvironmentFileInvalid,
+            message,
+        ),
         ServiceError::Metrics(_) | ServiceError::Database(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             ErrorCode::Internal,

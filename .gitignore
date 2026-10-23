@@ -1,8 +1,4 @@
 target
-.harness-mem
-
-**/.claude/
-CLAUDE.md
 
 .env
 # Secretos locales de desarrollo
@@ -10,6 +6,13 @@ CLAUDE.md
 # Base de datos local del agente en desarrollo (BLACKSMITH_DATABASE_PATH)
 .data/
 
-Plans.md
-
+# Archivos de configuración de inteligencia artificial
+**/.claude/
+**/.harness-mem/
 **/out/
+**/.codex/
+**/.agents/
+**/AGENTS.md
+**/AGENT.md
+**/CLAUDE.md
+**/Plans.md

@@ -14,6 +14,20 @@ const COMMANDS: &[&str] = &[
     "server_remove",
     "server_add_local",
     "local_agent_status",
+    "agent_request",
+    "logs_follow",
+    "logs_stop",
+    "github_status",
+    "github_configure",
+    "github_use_default_app",
+    "github_share_with_server",
+    "github_add_deploy_key",
+    "github_login_start",
+    "github_login_wait",
+    "github_login_cancel",
+    "github_logout",
+    "github_repositories",
+    "github_branches",
 ];
 
 fn main() {

@@ -40,6 +40,38 @@ pub enum ErrorCode {
     LogStreamLimit,
     /// La ruta solo admite WebSocket y la petición no es un handshake válido.
     WebSocketRequired,
+    /// Ya hay un servicio registrado con ese nombre.
+    ServiceAlreadyExists,
+    /// Alguna variable de entorno no es válida (el mensaje dice cuál y por qué).
+    InvalidEnvironment,
+    /// El archivo de variables del servidor no se puede usar (permisos, formato…).
+    EnvironmentFileInvalid,
+    /// La definición del despliegue no es válida (el mensaje dice qué campo y por qué).
+    InvalidDeployment,
+    /// El repositorio de un servicio no se puede cambiar una vez elegido (la rama sí).
+    RepositoryLocked,
+    /// Falta algo para desplegar (repositorio o comando de arranque).
+    DeploymentIncomplete,
+    /// El servicio usa llave de despliegue y aún no la tiene.
+    DeployKeyMissing,
+    /// Ya hay un despliegue en curso para ese servicio.
+    DeployInProgress,
+    /// El servicio no tiene versión activa: hay que desplegarlo antes de iniciarlo.
+    NotDeployed,
+    /// No hay versión anterior a la que volver (rollback).
+    NothingToRollBack,
+    /// El servicio no tiene comando de arranque (sitio solo estático): no hay nada que iniciar.
+    NothingToRun,
+    /// La configuración del sitio no es válida (el mensaje dice qué campo y por qué).
+    InvalidSite,
+    /// Otro servicio ya usa alguno de esos dominios.
+    DomainInUse,
+    /// nginx rechazó la configuración (`nginx -t`): se mantuvo la anterior. El mensaje trae su
+    /// salida.
+    NginxRejected,
+    /// No se pudo aplicar en nginx: integración sin instalar (deploy/nginx/install.sh), sin
+    /// permiso de polkit o nginx no disponible.
+    NginxUnavailable,
 
     /// Código emitido por un agente más reciente que este cliente. El agente nunca lo envía.
     #[serde(other)]
@@ -98,6 +130,21 @@ mod tests {
             SystemdFailed,
             LogStreamLimit,
             WebSocketRequired,
+            ServiceAlreadyExists,
+            InvalidEnvironment,
+            EnvironmentFileInvalid,
+            InvalidDeployment,
+            RepositoryLocked,
+            DeploymentIncomplete,
+            DeployKeyMissing,
+            DeployInProgress,
+            NotDeployed,
+            NothingToRollBack,
+            NothingToRun,
+            InvalidSite,
+            DomainInUse,
+            NginxRejected,
+            NginxUnavailable,
         ];
         for code in all {
             match code {
@@ -124,6 +171,21 @@ mod tests {
                 | SystemdFailed
                 | LogStreamLimit
                 | WebSocketRequired
+                | ServiceAlreadyExists
+                | InvalidEnvironment
+                | EnvironmentFileInvalid
+                | InvalidDeployment
+                | RepositoryLocked
+                | DeploymentIncomplete
+                | DeployKeyMissing
+                | DeployInProgress
+                | NotDeployed
+                | NothingToRollBack
+                | NothingToRun
+                | InvalidSite
+                | DomainInUse
+                | NginxRejected
+                | NginxUnavailable
                 | Unknown => {}
             }
         }

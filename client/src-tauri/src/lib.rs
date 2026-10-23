@@ -1,6 +1,9 @@
+mod agent_api;
+mod agent_http;
 mod agent_probe;
 mod commands;
 mod error;
+mod github;
 mod secrets;
 mod servers;
 mod ssh;
@@ -42,11 +45,14 @@ fn app_state(app: &tauri::App) -> Result<AppState, Box<dyn std::error::Error>> {
             .map(|home| home.join(".ssh").join("known_hosts")),
     );
     let servers = ServerStore::new(data_dir.join("servers.json"));
-    Ok(AppState::new(vault, servers, host_keys, home))
+    let github = github::GitHubState::new(data_dir.join("github.json"));
+    Ok(AppState::new(vault, servers, host_keys, home, github))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // TLS de reqwest (GitHub) con ring, la misma criptografía que usa russh.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -68,6 +74,20 @@ pub fn run() {
             commands::server_remove,
             commands::server_add_local,
             commands::local_agent_status,
+            agent_api::agent_request,
+            agent_api::logs_follow,
+            agent_api::logs_stop,
+            github::github_status,
+            github::github_configure,
+            github::github_use_default_app,
+            github::github_share_with_server,
+            github::github_add_deploy_key,
+            github::github_login_start,
+            github::github_login_wait,
+            github::github_login_cancel,
+            github::github_logout,
+            github::github_repositories,
+            github::github_branches,
         ])
         .run(tauri::generate_context!());
     if let Err(error) = result {

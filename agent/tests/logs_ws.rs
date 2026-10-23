@@ -16,9 +16,10 @@ use std::{
 use agent::{
     config::Config,
     db::Database,
+    deploy::Paths,
     http,
     routes::logs::LogTimings,
-    services::{ServiceName, ServiceSlug},
+    services::{ServiceDescription, ServiceName, ServiceSlug},
     state::{AppState, Shutdown},
     systemd::{Journalctl, Scope, Systemctl},
 };
@@ -36,11 +37,11 @@ const FAKE: &str = r#"#!/bin/sh
 for unit; do :; done
 entry() { echo "{\"__REALTIME_TIMESTAMP\":\"$1\",\"MESSAGE\":\"$2\",\"PRIORITY\":\"6\"}"; }
 case "$unit" in
-    --unit=bbel-api.service)
+    --unit=bbel@api.service)
         entry 1 "pid=$$"; entry 2 dos; entry 3 tres
         exec /bin/sleep 30 ;;
-    --unit=bbel-fin.service) entry 1 ultima; exit 0 ;;
-    --unit=bbel-falla.service) echo "Failed to open journal: Permission denied" >&2; exit 1 ;;
+    --unit=bbel@fin.service) entry 1 ultima; exit 0 ;;
+    --unit=bbel@falla.service) echo "Failed to open journal: Permission denied" >&2; exit 1 ;;
 esac
 exit 99
 "#;
@@ -72,6 +73,7 @@ async fn agent(timings: LogTimings) -> Agent {
         db.insert_service(
             ServiceSlug::new(slug).unwrap(),
             ServiceName::new(slug).unwrap(),
+            ServiceDescription::default(),
         )
         .await
         .unwrap();
@@ -81,6 +83,7 @@ async fn agent(timings: LogTimings) -> Agent {
         db,
         Systemctl::new("/no/se/usa", Scope::System, Duration::from_secs(1)),
         Journalctl::new(fake(), Scope::System),
+        Paths::rooted(Path::new("/no/se/usa"), Path::new("/no/se/usa"), None),
     );
     state.log_timings = timings;
     let shutdown = state.shutdown.clone();

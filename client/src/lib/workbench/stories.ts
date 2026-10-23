@@ -35,7 +35,10 @@ export const GROUP_ORDER = [
     'Superposiciones',
     'Estado',
     'Íconos',
+    'Navegación',
     'Servidores',
+    'Servicios',
+    'GitHub',
 ];
 
 export function toSlug(value: string): string {

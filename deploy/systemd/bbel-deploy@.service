@@ -1,0 +1,45 @@
+# Generada por BBEL Blacksmith (agent/src/deploy/units.rs): no la edite a mano.
+# Despliegue de %i: clona la rama, ejecuta la preparación y activa la versión.
+
+[Unit]
+Description=BBEL Blacksmith: despliegue de %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=bbel
+Group=bbel
+StateDirectory=bbel/%i
+StateDirectoryMode=0711
+UMask=0077
+Environment=HOME=%S/bbel/%i
+EnvironmentFile=-%E/bbel/env/global.env
+EnvironmentFile=-%E/bbel/env/services/%i.env
+WorkingDirectory=%S/bbel/%i
+LoadCredential=spec:%S/blacksmith/deployments/%i/spec.json
+LoadCredential=github-token:%S/blacksmith/deployments/%i/github-token
+LoadCredential=deploy-key:%S/blacksmith/deployments/%i/deploy-key
+ExecStart=/opt/blacksmith/bin/blacksmith-agent run-deploy
+TimeoutStartSec=30min
+# Solo su directorio: los demás servicios, las variables y los datos del agente no existen.
+TemporaryFileSystem=%S/bbel:ro
+BindPaths=%S/bbel/%i
+InaccessiblePaths=-%E/bbel
+InaccessiblePaths=-%S/blacksmith
+ProtectProc=invisible
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RemoveIPC=yes

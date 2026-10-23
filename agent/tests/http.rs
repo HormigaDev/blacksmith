@@ -1,9 +1,9 @@
 // Los helpers no son `#[test]`, así que `allow-unwrap-in-tests` no los cubre.
 #![allow(clippy::unwrap_used)]
 
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
-use agent::{config::Config, db::Database, http, state::AppState};
+use agent::{config::Config, db::Database, deploy::Paths, http, state::AppState};
 use axum::{
     Router,
     body::Body,
@@ -18,6 +18,7 @@ fn app() -> Router {
     http::router(AppState::new(
         Arc::new(config),
         Database::open_in_memory().unwrap(),
+        Paths::rooted(Path::new("/no/se/usa"), Path::new("/no/se/usa"), None),
     ))
 }
 

@@ -45,4 +45,31 @@ test.describe('Ventana principal', () => {
         await waitForApp(page);
         await expect(page.getByRole('heading', { name: '404' })).toBeVisible();
     });
+
+    // Ventana estrecha o móvil (styles.md, «Tamaños de ventana»): la barra lateral es un panel.
+    test('compacto: la navegación se abre con el menú y se cierra con Escape', async ({ page }) => {
+        await page.setViewportSize({ width: 400, height: 700 });
+        await page.goto('/');
+        await waitForApp(page);
+
+        const home = page.getByRole('link', { name: 'Servidores' });
+        const menu = page.getByRole('button', { name: 'Mostrar navegación' });
+        await expect(home).toBeHidden();
+        await menu.click();
+        await expect(home).toBeVisible();
+        await expect(home).toBeFocused();
+        await expect(page.getByRole('button', { name: 'Ocultar navegación' })).toHaveAttribute('aria-expanded', 'true');
+
+        await page.keyboard.press('Escape');
+        await expect(home).toBeHidden();
+        await expect(menu).toBeFocused();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(400);
+    });
+
+    test('ancho normal: sin botón de menú y con la barra lateral fija', async ({ page }) => {
+        await page.goto('/');
+        await waitForApp(page);
+        await expect(page.getByRole('button', { name: 'Mostrar navegación' })).toBeHidden();
+        await expect(page.getByRole('link', { name: 'Servidores' })).toBeVisible();
+    });
 });

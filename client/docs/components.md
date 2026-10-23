@@ -38,6 +38,8 @@ Para verlos aislados, con todas sus variantes: `pnpm workbench` (ventana de Taur
 | `Dialog`            | Modal genérico con `title`, `description`, contenido y snippet `footer`.                                                                                                                                                                                                                                                      |
 | `ConfirmDialog`     | **Obligatorio antes de cualquier acción destructiva** (parar un servicio, borrar variables, desplegar). `variant="danger"`; `onConfirm` asíncrono con estado de carga; si lanza, sigue abierto.                                                                                                                               |
 | `Tooltip`           | Ayuda contextual. El disparador recibe las props por el snippet: `{#snippet children(props)}<Button {...props}>`.                                                                                                                                                                                                             |
+| `Panel`             | Superficie de una sección de página: `title` opcional, snippet `actions` a la derecha y contenido. Agrupa sin repetir lo obvio: el título nombra la sección, sin subtítulos que la expliquen.                                                                                                                                 |
+| `TabNav`            | Pestañas de navegación entre rutas (`items: { href, label, current }[]`), con `aria-current`.                                                                                                                                                                                                                                 |
 | `Badge`             | Estado corto: neutral · accent · success · warning · danger · info; `dot`.                                                                                                                                                                                                                                                    |
 | `Spinner`           | Indicador de carga; con `label` se anuncia a lectores de pantalla.                                                                                                                                                                                                                                                            |
 | `Field`             | Base interna de los controles: etiqueta, ayuda, error y ARIA. Úsese al crear un control nuevo.                                                                                                                                                                                                                                |
@@ -102,16 +104,59 @@ devuelto al asa; el orden se aplica al momento (`onMove`) y se persiste al termi
 Vanilla sobre la API de Fetch: **no se usa Axios** ni ninguna librería HTTP.
 
 ```ts
-import { createHttpClient, describeError, HttpError } from '$lib/http';
-
-const agent = createHttpClient({ baseUrl: 'http://127.0.0.1:4040/api/v1/', fetch: agentFetch });
+import { agentClient, listServices } from '$lib/agent';
+import { describeError } from '$lib/http';
 
 try {
-    const status = await agent.get('health', { parse: parseAgentStatus });
+    // `agentClient(serverId)`: `createHttpClient` con el transporte de Rust (`agentFetch`).
+    const services = await listServices(agentClient(server.profile.id));
 } catch (error) {
-    toast.error(describeError(error)); // traduce por el `code` del agente
+    toast.error(describeError(error)); // traduce por el `code` del agente (o del túnel)
 }
 ```
+
+### Estado global
+
+Los datos compartidos (servidores, GitHub, servicios) viven en stores con runes y se importan de
+`$lib/stores`; las pantallas no guardan copias propias. Reglas en [state.md](state.md).
+
+### Hablar con el agente (`$lib/agent`)
+
+- `agentFetch(serverId)` tiene la firma de `fetch` pero ejecuta la petición en Rust (comando
+  `agent_request`): la webview solo elige el **servidor** y la **ruta** (`/api/v1/…`); la
+  dirección (extremo del túnel o agente local) la resuelve Rust. No hay forma de apuntarlo a otro
+  host ni a otra ruta.
+- Si no llega al agente (servidor desconectado, túnel caído), el cliente HTTP lanza
+  `NetworkError` con el `TunnelError` como `cause`; `describeError` muestra ese motivo.
+- Logs en tiempo real: `followLogs(serverId, servicio, onEvent)` abre el WebSocket desde Rust
+  (`logs_follow`) y entrega cada evento por un `Channel` de Tauri; devuelve la función para
+  cerrarlo. El estado del visor lo lleva `LogSession` (`$lib/services/log-session.svelte`). Con
+  `{ deploy: true }` sigue la salida del último despliegue (`bbel-deploy@<servicio>`).
+- Los tipos de la API (`types.ts`) son espejo de `shared` y se validan con sus `parse*`.
+
+### GitHub (`$lib/github`)
+
+- Todo pasa por Rust (`github_*` en client/src-tauri/src/github): la webview no sale a internet.
+  El token se guarda cifrado en la bóveda y nunca llega a la webview.
+- `github` (`github.svelte.ts`) es la única fuente de verdad: App en uso, cuenta, Device Flow en
+  curso, repositorios y si el panel de conexión está abierto (`panelOpen`), para que cualquier
+  pantalla lo pueda abrir.
+- Por defecto se usa la GitHub App del proyecto (`DEFAULT_APP` en Rust); quien lo prefiera
+  configura la suya (`github.configure`) y puede volver a la del proyecto (`github.useDefault`).
+- Al guardar un despliegue o desplegar, `github_share_with_server` deja en el servidor la cuenta
+  conectada: el token va de la bóveda de Rust al agente por el túnel, sin pasar por la webview.
+  El servidor clona y prepara solo. Opcionalmente, un servicio usa su propia llave de despliegue
+  (`DeployKeyPanel`); `addDeployKey` la registra en un clic solo con una App propia con
+  _Administration_ (la de BBEL nunca lo pide) y, si falla con `GITHUB_PERMISSION_MISSING`, la
+  interfaz pasa al registro manual.
+
+### Sitios de nginx
+
+`SiteForm` (pestaña Web) edita el sitio de un servicio: plantilla, dominios, puerto y HTTPS. Valida
+con las mismas reglas que el agente (`nginx::sites::validate`); el certificado llega en segundo
+plano y `ServiceEntry` refresca el sitio mientras `tls` es `issuing`. Los errores del agente se
+muestran por su código (`NGINX_REJECTED`, `DOMAIN_IN_USE`…); el motivo de un certificado fallido
+es un dato del sitio (`tlsDetail`), no un mensaje de error.
 
 - **Transporte inyectable.** La webview **no** puede llamar al agente directamente: la CSP solo
   permite IPC, y el agente rechaza toda petición con cabecera `Origin` (protección contra CSRF y

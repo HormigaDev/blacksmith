@@ -62,6 +62,41 @@ pub enum CommandError {
     #[error("el puerto local {port} está en uso")]
     PortInUse { port: u16 },
 
+    #[error("el servidor no está en la lista")]
+    ServerNotFound,
+    #[error("el servidor no está conectado")]
+    NotConnected,
+    /// El agente rechazó la petición antes de abrir el WebSocket (servicio no registrado, cupo
+    /// de visores lleno…). Trae el código del agente para traducirlo.
+    #[error("falta configurar la GitHub App (Client ID y slug)")]
+    GitHubNotConfigured,
+    #[error("no hay ninguna cuenta de GitHub conectada")]
+    GitHubNotConnected,
+    #[error("se rechazó la autorización en GitHub")]
+    GitHubAccessDenied,
+    #[error("el código de GitHub caducó")]
+    GitHubCodeExpired,
+    #[error("se canceló la conexión con GitHub")]
+    GitHubLoginCancelled,
+    #[error("la GitHub App no tiene activado el Device Flow")]
+    GitHubDeviceFlowDisabled,
+    #[error("no se pudo contactar con GitHub")]
+    GitHubUnreachable,
+    #[error("se superó el límite de peticiones de GitHub")]
+    GitHubRateLimited,
+    #[error("la GitHub App no tiene permiso para registrar llaves en ese repositorio")]
+    GitHubPermissionMissing,
+    #[error("esa llave ya está registrada en otro repositorio")]
+    GitHubKeyInUse,
+    #[error("GitHub respondió {status}")]
+    GitHub { status: u16 },
+    #[error("el agente rechazó la petición ({status}): {message}")]
+    AgentRejected {
+        status: u16,
+        code: shared::ErrorCode,
+        message: String,
+    },
+
     #[error("{context}")]
     Internal {
         context: &'static str,
@@ -104,6 +139,20 @@ impl CommandError {
             Self::AgentUnreachable => "AGENT_UNREACHABLE",
             Self::AgentInvalid => "AGENT_INVALID",
             Self::PortInUse { .. } => "PORT_IN_USE",
+            Self::ServerNotFound => "SERVER_NOT_FOUND",
+            Self::NotConnected => "NOT_CONNECTED",
+            Self::AgentRejected { .. } => "AGENT_REJECTED",
+            Self::GitHubNotConfigured => "GITHUB_NOT_CONFIGURED",
+            Self::GitHubNotConnected => "GITHUB_NOT_CONNECTED",
+            Self::GitHubAccessDenied => "GITHUB_ACCESS_DENIED",
+            Self::GitHubCodeExpired => "GITHUB_CODE_EXPIRED",
+            Self::GitHubLoginCancelled => "GITHUB_LOGIN_CANCELLED",
+            Self::GitHubDeviceFlowDisabled => "GITHUB_DEVICE_FLOW_DISABLED",
+            Self::GitHubUnreachable => "GITHUB_UNREACHABLE",
+            Self::GitHubRateLimited => "GITHUB_RATE_LIMITED",
+            Self::GitHubPermissionMissing => "GITHUB_PERMISSION_MISSING",
+            Self::GitHubKeyInUse => "GITHUB_KEY_IN_USE",
+            Self::GitHub { .. } => "GITHUB_ERROR",
             Self::Internal { .. } => "INTERNAL",
         }
     }
@@ -132,6 +181,15 @@ enum Details<'a> {
     Field {
         field: &'a str,
     },
+    Http {
+        #[serde(rename = "httpStatus")]
+        http_status: u16,
+    },
+    Agent {
+        status: u16,
+        #[serde(rename = "agentCode")]
+        agent_code: shared::ErrorCode,
+    },
 }
 
 impl Serialize for CommandError {
@@ -155,6 +213,13 @@ impl Serialize for CommandError {
             }),
             Self::PortInUse { port } => Some(Details::Port { port: *port }),
             Self::InvalidTarget(field) => Some(Details::Field { field }),
+            Self::GitHub { status } => Some(Details::Http {
+                http_status: *status,
+            }),
+            Self::AgentRejected { status, code, .. } => Some(Details::Agent {
+                status: *status,
+                agent_code: *code,
+            }),
             _ => None,
         };
         Wire {

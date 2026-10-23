@@ -7,6 +7,30 @@ use serde::{Deserialize, Serialize};
 /// Ruta base de los servicios. `{name}` es el identificador corto del servicio registrado.
 pub const SERVICES_PATH: &str = "/api/v1/services";
 
+/// Un servicio registrado (`GET /api/v1/services`). Datos informativos: registrarlo no crea ni
+/// toca nada en systemd.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceSummary {
+    /// Identificador corto (`[a-z0-9-]`, 1-48): define la unidad `bbel-<name>.service`.
+    pub name: String,
+    pub display_name: String,
+    pub description: String,
+    pub unit: String,
+    /// Segundos Unix (UTC).
+    pub created_at: i64,
+}
+
+/// Cuerpo de `POST /api/v1/services`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisterService {
+    pub name: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub description: String,
+}
+
 /// `LoadState` de systemd: si la unidad está instalada y es válida.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -62,6 +86,12 @@ pub struct ServiceStatusReport {
     pub pid: Option<u32>,
     /// `None` sin proceso principal, o si el proceso terminó justo durante la medición.
     pub metrics: Option<ProcessMetrics>,
+    /// Hay una versión activa (un despliegue terminó bien). Sin ella la unidad existe, por la
+    /// plantilla, pero no puede arrancar: systemd la omitiría.
+    pub deployed: bool,
+    /// Versión activa y la anterior, a la que vuelve un rollback.
+    pub release: Option<String>,
+    pub previous_release: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -90,16 +120,19 @@ mod tests {
     fn json_del_estado() {
         let report = ServiceStatusReport {
             name: "api".into(),
-            unit: "bbel-api.service".into(),
+            unit: "bbel@api.service".into(),
             load_state: LoadState::NotFound,
             active_state: ActiveState::Inactive,
             sub_state: "dead".into(),
             pid: None,
             metrics: None,
+            deployed: false,
+            release: None,
+            previous_release: None,
         };
         assert_eq!(
             serde_json::to_string(&report).unwrap(),
-            r#"{"name":"api","unit":"bbel-api.service","loadState":"not-found","activeState":"inactive","subState":"dead","pid":null,"metrics":null}"#
+            r#"{"name":"api","unit":"bbel@api.service","loadState":"not-found","activeState":"inactive","subState":"dead","pid":null,"metrics":null,"deployed":false,"release":null,"previousRelease":null}"#
         );
         let metrics = ProcessMetrics {
             rss_bytes: 1_048_576,

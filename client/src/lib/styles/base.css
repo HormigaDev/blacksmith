@@ -15,7 +15,11 @@ body {
     height: 100%;
 }
 
+/* Aplicación de escritorio: el documento nunca se desplaza. Solo hace scroll el contenido del
+   marco (ver AppShell y styles.md, «Marco fijo»). `clip` en el body impide además el scroll
+   programático (foco, scrollIntoView) que `hidden` todavía permite. */
 html {
+    overflow: hidden;
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
 }
@@ -31,6 +35,7 @@ body {
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    overflow: clip;
     /* Aplicación de escritorio: sin el rebote de scroll de una web. */
     overscroll-behavior: none;
 }
