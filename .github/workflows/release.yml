@@ -164,6 +164,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh run download "$GITHUB_RUN_ID" --dir release
+      - name: Normalize downloaded artifacts
+        run: |
+          expected=(
+            "linux-blacksmith-${RELEASE_VERSION}.deb"
+            "linux-arm-blacksmith-${RELEASE_VERSION}.deb"
+            "windows-blacksmith-${RELEASE_VERSION}.exe"
+            "windows-blacksmith-${RELEASE_VERSION}.msi"
+          )
+          for artifact in "${expected[@]}"; do
+            source="$(find release -type f -name "$artifact" -print -quit)"
+            test -n "$source" || {
+              echo "Downloaded artifact not found: $artifact" >&2
+              find release -maxdepth 3 -type f -print >&2
+              exit 1
+            }
+            cp "$source" "release/$artifact"
+          done
       - name: Validate artifact names
         run: |
           expected=(
@@ -173,7 +190,7 @@ jobs:
             "windows-blacksmith-${RELEASE_VERSION}.msi"
           )
           for artifact in "${expected[@]}"; do
-            test "$(find release -type f -name "$artifact" | wc -l)" -eq 1
+            test -f "release/$artifact"
           done
       - name: Create release and upload installers
         env:
