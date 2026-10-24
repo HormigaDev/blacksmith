@@ -24,7 +24,7 @@ anterior cuando se instala una versión posterior:
 ```sh
 cd client
 pnpm tauri build --target x86_64-unknown-linux-gnu --bundles deb
-sudo dpkg -i src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
+sudo dpkg -i ../target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
 ```
 
 Objetivos oficiales:
