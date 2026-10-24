@@ -141,8 +141,12 @@ fn nginx_acepta_todas_las_plantillas() {
     fs::write(
         root.join("nginx.conf"),
         format!(
+            // Con lo que suele traer una configuración previa en `http` (Ubuntu endurecido, un
+            // proxy de WebSocket propio): Blacksmith debe convivir con ella sin duplicados.
             "pid {root}/nginx.pid;\nerror_log stderr;\nevents {{}}\nhttp {{\n    \
              include /etc/nginx/mime.types;\n    access_log {root}/access.log;\n    \
+             server_tokens off;\n    limit_req_status 503;\n    \
+             map $http_upgrade $connection_upgrade {{ default upgrade; '' close; }}\n    \
              include {root}/blacksmith.conf;\n    include {root}/blacksmith-default.conf;\n}}\n",
             root = root.display()
         ),

@@ -62,6 +62,12 @@ install -m 0644 "$HERE"/snippets/blacksmith/*.conf /etc/nginx/snippets/blacksmit
 # Se instala al final, tras validarla (ver «Validando»): con un error, nginx seguiría con la anterior.
 COMMON=$(mktemp)
 sed "s|@SITES_DIR@|$SITES_DIR|" "$HERE/conf.d/blacksmith.conf" >"$COMMON"
+# Solo puede ir en `http`, donde repetirla es un error: si su configuración ya la define, se
+# respeta la suya.
+if grep -rqsE '^[[:space:]]*server_names_hash_bucket_size' /etc/nginx/nginx.conf /etc/nginx/conf.d \
+    --exclude=blacksmith.conf; then
+    sed -i '/^server_names_hash_bucket_size/d' "$COMMON"
+fi
 
 if grep -rqsE 'listen[^;]*default_server' /etc/nginx/sites-enabled /etc/nginx/conf.d --exclude=blacksmith-default.conf; then
     echo "    aviso: ya hay un default_server (p. ej. /etc/nginx/sites-enabled/default): no se instala"
