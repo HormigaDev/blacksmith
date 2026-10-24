@@ -18,16 +18,20 @@
 - [Screenshots](#screenshots)
 - [Quick start for experienced users](#quick-start-for-experienced-users)
     - [Build the agent](#build-the-agent)
-    - [Install the server units](#install-the-server-units)
+    - [Install on the server](#install-on-the-server)
     - [Run the desktop client](#run-the-desktop-client)
 - [Complete setup guide](#complete-setup-guide)
     - [Requirements](#requirements)
-    - [1. Create the service accounts](#1-create-the-service-accounts)
-    - [2. Install and verify polkit](#2-install-and-verify-polkit)
-    - [3. Configure the agent](#3-configure-the-agent)
-    - [4. Install nginx integration when needed](#4-install-nginx-integration-when-needed)
-    - [5. Register and deploy a service](#5-register-and-deploy-a-service)
-- [Configure GitHub webhooks](#configure-github-webhooks)
+    - [1. Build the agent](#1-build-the-agent)
+    - [2. Create the service accounts](#2-create-the-service-accounts)
+    - [3. Install the agent and its configuration](#3-install-the-agent-and-its-configuration)
+    - [4. Install the service templates and polkit](#4-install-the-service-templates-and-polkit)
+    - [5. Start the agent](#5-start-the-agent)
+    - [6. Allow the SSH tunnel](#6-allow-the-ssh-tunnel)
+    - [7. Web sites with nginx (optional)](#7-web-sites-with-nginx-optional)
+    - [8. Deploy on push with GitHub webhooks (optional)](#8-deploy-on-push-with-github-webhooks-optional)
+    - [9. Register and deploy a service](#9-register-and-deploy-a-service)
+    - [Updating](#updating)
 - [Development](#development)
 - [Repository map](#repository-map)
 - [Security](#security)
@@ -156,29 +160,29 @@ cargo build --release -p agent
 
 The resulting binary is `target/release/blacksmith-agent`.
 
-### Install the server units
+### Install on the server
 
-Install the agent and the systemd templates as root on the VPS. The exact paths can be
-adapted to your host, but the service account and unit names should remain consistent with
-the files in `deploy/`.
+The short version, as root on the VPS, from the repository root (each step is explained in the
+[complete setup guide](#complete-setup-guide)):
 
 ```sh
-install -D -o root -g root -m 0755 \
-  target/release/blacksmith-agent \
-  /opt/blacksmith/bin/blacksmith-agent
-
-install -m 0644 deploy/systemd/*.service /etc/systemd/system/
-install -m 0644 deploy/blacksmith.service /etc/systemd/system/
-install -m 0644 deploy/polkit/10-blacksmith.rules \
-  /etc/polkit-1/rules.d/10-blacksmith.rules
-
+apt install git openssh-client polkitd
+for user in blacksmith blacksmith-apps blacksmith-fetch; do
+    useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin "$user"
+done
+install -D -o root -g root -m 0755 target/release/blacksmith-agent /opt/blacksmith/bin/blacksmith-agent
+install -d -o root -g blacksmith -m 0750 /etc/blacksmith
+install -o root -g blacksmith -m 0640 deploy/agent.env /etc/blacksmith/agent.env
+install -o root -g root -m 0644 deploy/polkit/10-blacksmith.rules /etc/polkit-1/rules.d/
+install -m 0644 deploy/systemd/*.service deploy/blacksmith.service /etc/systemd/system/
 systemctl daemon-reload
+sh deploy/polkit/verify.sh && sh deploy/systemd/verify-sandbox.sh
 systemctl enable --now blacksmith.service
 ```
 
-The service account, directories, environment file, nginx integration, and credentials must
-be prepared according to the deployment files and the full guide below. Do not replace the
-polkit rules with a broad `sudoers` entry.
+Optional: `sh deploy/nginx/install.sh` for web sites and
+`sh deploy/nginx/install-webhooks.sh <domain>` for deploy-on-push. Never replace the polkit rule
+with a broad `sudoers` entry.
 
 ### Run the desktop client
 
@@ -201,31 +205,50 @@ you trust.
 
 ## Complete setup guide
 
+Every command in steps 1–8 runs **as root on the VPS, from the root of a checkout of this
+repository** (the scripts and unit files are read from `deploy/`).
+
 ### Requirements
 
-On the VPS:
+On the VPS (Debian 12+ or Ubuntu 22.04+; package names may differ elsewhere):
 
-- A Linux system with systemd
-- Git
-- Rust-built Blacksmith agent
-- polkit
-- nginx and ACL support when serving static sites or reverse proxies
-- certbot when HTTPS certificates are required
+- systemd, polkit (`polkitd`), Git and the OpenSSH client (`git`, `openssh-client`): the agent
+  manages units through polkit, and deployments clone with `git` (and `ssh` for deploy keys).
+- An SSH server that allows TCP forwarding (see step 6).
+- For web sites: `nginx` and, for HTTPS, `certbot`. A domain whose DNS points to the VPS and
+  ports 80 and 443 open.
+- To build on the VPS itself: Rust 1.97+ and a C compiler (`build-essential`).
 
 On the desktop:
 
 - Rust 1.97 or newer
 - Node.js 24.14.0
 - pnpm 11
-- Tauri 2 system prerequisites for your platform
+- Tauri 2 system prerequisites for your platform (on Linux, the GTK 3 and WebKitGTK 4.1
+  development packages listed in the [Tauri prerequisites guide](https://v2.tauri.app/start/prerequisites/))
 
-For Linux desktop development, install the GTK 3 and WebKitGTK 4.1 development packages
-listed in the [Tauri prerequisites guide](https://v2.tauri.app/start/prerequisites/).
+```sh
+apt install git openssh-client polkitd
+```
 
-### 1. Create the service accounts
+### 1. Build the agent
 
-Server installations use separate accounts for the agent, application services, and fetch
-operations. Create them once as root:
+```sh
+cargo build --release -p agent
+```
+
+Build on the VPS, or on a machine with the same architecture and an equal or older glibc, and
+copy `target/release/blacksmith-agent` together with the `deploy/` directory.
+
+### 2. Create the service accounts
+
+Three accounts, so that no deployed code runs with the agent's permissions:
+
+| Account | Runs | Can |
+|---|---|---|
+| `blacksmith` | the agent | manage its own units through polkit |
+| `blacksmith-apps` | services and their setup commands | write only in its service directory |
+| `blacksmith-fetch` | the repository clone | read the deployment credentials, nothing else |
 
 ```sh
 for user in blacksmith blacksmith-apps blacksmith-fetch; do
@@ -234,110 +257,127 @@ for user in blacksmith blacksmith-apps blacksmith-fetch; do
 done
 ```
 
-The committed units in `deploy/systemd/` document the ownership and filesystem paths they
-expect. Read them before starting the agent.
-
-### 2. Install and verify polkit
+### 3. Install the agent and its configuration
 
 ```sh
-install -o root -g root -m 0644 \
-  deploy/polkit/10-blacksmith.rules \
-  /etc/polkit-1/rules.d/10-blacksmith.rules
-
-sh deploy/polkit/verify.sh
-```
-
-The verification script creates temporary test units and checks both allowed and denied
-operations. A successful result should end with `regla correcta`.
-
-### 3. Configure the agent
-
-Copy the environment template and set the values appropriate for the host:
-
-```sh
+install -D -o root -g root -m 0755 target/release/blacksmith-agent /opt/blacksmith/bin/blacksmith-agent
 install -d -o root -g blacksmith -m 0750 /etc/blacksmith
-install -o root -g blacksmith -m 0640 agent.env /etc/blacksmith/agent.env
+install -o root -g blacksmith -m 0640 deploy/agent.env /etc/blacksmith/agent.env
 ```
 
-Configuration uses `BLACKSMITH_*` variables. The agent validates unknown variables and
-out-of-range values at startup. In production, secrets such as the webhook secret should be
-provided through systemd credentials rather than ordinary environment variables.
+The binary belongs to root so the agent can never replace its own executable.
+`/etc/blacksmith/agent.env` must exist even if every line is commented out: the defaults are
+the production ones. It accepts the `BLACKSMITH_*` variables documented in
+[`.env.template`](./.env.template); an unknown one stops the agent at startup. Secrets never go
+in this file.
 
-### 4. Install nginx integration when needed
-
-For sites and reverse proxies:
+### 4. Install the service templates and polkit
 
 ```sh
-apt install nginx certbot acl
+install -m 0644 deploy/systemd/*.service /etc/systemd/system/
+install -m 0644 deploy/blacksmith.service /etc/systemd/system/
+install -o root -g root -m 0644 deploy/polkit/10-blacksmith.rules /etc/polkit-1/rules.d/
+systemctl daemon-reload
+```
+
+Check both before starting the agent:
+
+```sh
+sh deploy/polkit/verify.sh            # ends with «regla correcta»
+sh deploy/systemd/verify-sandbox.sh   # ends with «Sandbox correcto.»
+```
+
+`verify.sh` creates temporary units and checks what the agent may and may not do.
+`verify-sandbox.sh` starts a throwaway service with the same sandbox as a real one and checks
+that it cannot see other services, the agent's data, D-Bus or other users' processes. Both
+clean up after themselves.
+
+### 5. Start the agent
+
+```sh
+systemctl enable --now blacksmith.service
+systemctl status blacksmith.service
+journalctl -u blacksmith.service -n 50
+```
+
+The agent listens only on `127.0.0.1:4040` and logs at startup whether polkit authorizes it.
+Its database is created at `/var/lib/blacksmith/agent.db`. Do not open port 4040 in the
+firewall: nothing outside the server needs it.
+
+### 6. Allow the SSH tunnel
+
+The desktop client reaches the agent through an SSH tunnel to `127.0.0.1:4040`, using an SSH
+key of any account on the VPS (it does not need root). The SSH server must allow TCP
+forwarding for that account. It does by default; if `/etc/ssh/sshd_config` (or a file in
+`sshd_config.d/`) sets `AllowTcpForwarding no`, set it to `local` for that account, for example:
+
+```text
+Match User deploy
+    AllowTcpForwarding local
+```
+
+and `systemctl reload ssh`. On the first connection the client shows the server's key
+fingerprint; compare it with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` before accepting.
+
+### 7. Web sites with nginx (optional)
+
+Needed only for services that serve a web site (static files or a reverse proxy):
+
+```sh
+apt install nginx certbot
 sh deploy/nginx/install.sh
 ```
 
-The agent generates nginx configuration from validated site data. It supports static roots,
-HTTP upstreams, WebSockets, and optional HTTPS through certbot. The administration API is not
-published by this setup.
+The script installs the shared configuration, the security snippets, the editable templates
+in `/etc/blacksmith/nginx/templates/`, and the two units that run as root on the agent's behalf
+(validate and reload nginx, request certificates), each guarded by a script that re-validates
+what the agent wrote. It needs no domain and can be run again after every update.
 
-## Configure GitHub webhooks
-
-The webhook signature uses a dedicated HMAC secret. It is **not** the GitHub user token, the
-OAuth client secret, or the private key of a GitHub App. Blacksmith does not need and must never
-receive the private key of the BBEL Blacksmith App.
-
-The default BBEL Blacksmith App cannot give end users its webhook secret. To use automatic
-deployments safely, create and manage your own GitHub App:
-
-1. Open GitHub **Settings → Developer settings → GitHub Apps → New GitHub App**.
-2. Set a descriptive name and homepage URL for your project.
-3. Enable **Webhook** and set the callback URL to
-   `https://hooks.example.com/api/webhooks/github`.
-4. Generate a random webhook secret and keep it available while configuring the app and server:
-
-5. Configure the app's repository permissions for the repositories it will manage. For
-   automatic deploy-key registration, grant **Administration: Read and write** and install the
-   app only on the repositories that need it. This permission is powerful because it can manage
-   repository settings; do not grant it to the default BBEL Blacksmith App.
-6. Install the app on the selected account or repositories and use its **App ID/client ID and
-   slug** in the desktop client's GitHub settings. The app's private key is not required by
-   Blacksmith and should not be uploaded to the client or server.
-
-Store the webhook secret only on the VPS. Create the protected credential file as root:
+If it warns that another `default_server` exists (usually Debian's `default` site), remove it so
+that unknown hosts do not receive that site, and run the script again:
 
 ```sh
-install -d -o root -g root -m 0700 /etc/blacksmith/credentials
-umask 077
-openssl rand -hex 32 > /etc/blacksmith/credentials/github-webhook-secret
-chown root:root /etc/blacksmith/credentials/github-webhook-secret
-chmod 0600 /etc/blacksmith/credentials/github-webhook-secret
-cat /etc/blacksmith/credentials/github-webhook-secret
+rm /etc/nginx/sites-enabled/default
+sh deploy/nginx/install.sh
 ```
 
-Copy the displayed value into the GitHub App's webhook configuration, then uncomment these lines in
-`deploy/blacksmith.service`:
+Domains are configured per service, in the client's **Web** tab. Before saving a site, point the
+domain's DNS (A/AAAA records) to the VPS and open ports 80 and 443. With HTTPS enabled, the
+certificate is requested in the background and renewed by certbot's own timer.
 
-```ini
-LoadCredential=github-webhook-secret:/etc/blacksmith/credentials/github-webhook-secret
-Environment=BLACKSMITH_GITHUB_WEBHOOK_SECRET_FILE=/run/credentials/blacksmith.service/github-webhook-secret
-```
+### 8. Deploy on push with GitHub webhooks (optional)
 
-Apply the unit and expose only the webhook endpoint through the nginx configuration:
+Requires step 7 and a domain of its own for the webhooks (for example `hooks.example.com`) whose
+DNS already points to the VPS:
 
 ```sh
-install -m 0644 deploy/blacksmith.service /etc/systemd/system/blacksmith.service
-systemctl daemon-reload
-systemctl restart blacksmith.service
-nginx -t && systemctl reload nginx
+sh deploy/nginx/install-webhooks.sh hooks.example.com you@example.com
 ```
 
-The same secret can also be configured on a repository webhook under **Repository Settings →
-Webhooks**, if you do not use a GitHub App. In that case, the webhook still authenticates
-GitHub's signed request; it does not authenticate a desktop user. Keep the endpoint restricted
-to `POST /api/webhooks/github` and never expose the agent's administration port.
+The script generates the webhook secret (root-only, handed to the agent as a systemd credential
+through a drop-in, so you never edit the unit), obtains the certificate for that domain, publishes
+only `POST /api/webhooks/github` and prints the values to enter in GitHub. Then, in each
+repository: **Settings → Webhooks → Add webhook**:
 
-When a service uses a deploy key, a custom GitHub App with **Administration: Read and write**
-automatically registers the generated read-only key in the selected repository. With the default
-BBEL Blacksmith App, the client deliberately falls back to the documented manual copy-and-paste
-flow because that permission is not granted.
+- **Payload URL**: `https://hooks.example.com/api/webhooks/github`
+- **Content type**: `application/json`
+- **Secret**: the value printed by the script (also in `/etc/blacksmith/credentials/github-webhook-secret`)
+- **Events**: *Just the push event*
 
-### 5. Register and deploy a service
+Each push to a branch deploys every service configured with that repository and branch whose
+**Deploy on push** switch (in the **Deployment** tab) is on; it is on by default. Requests with
+an invalid signature are rejected; the administration API is never published.
+
+If you use your own GitHub App instead of repository webhooks, set the same URL and secret in
+its webhook settings. The default BBEL Blacksmith App cannot be used for this, because you do not
+control its webhook. Blacksmith never needs the private key of any GitHub App.
+
+When a service uses a deploy key, a GitHub App of your own with **Administration: Read and write**
+registers the generated read-only key automatically. With the default BBEL Blacksmith App the
+client falls back to the manual copy-and-paste flow, because that permission is deliberately not
+granted to it.
+
+### 9. Register and deploy a service
 
 From the desktop client:
 
@@ -346,11 +386,28 @@ From the desktop client:
 3. Select the GitHub repository and branch.
 4. Add setup commands such as `python -m venv .venv`, `npm ci`, or `cargo build --release`.
 5. Set the service start command, if it has a process.
-6. Optionally choose a public directory for a static site.
+6. Optionally choose a public directory for a static site, and configure its domain in the
+   **Web** tab.
 7. Deploy and inspect the service status and logs.
 
 Each deployment gets its own release directory. The previous release remains available for
 rollback when a new build or service start fails.
+
+### Updating
+
+Rebuild the agent and repeat the installs, which are idempotent:
+
+```sh
+install -o root -g root -m 0755 target/release/blacksmith-agent /opt/blacksmith/bin/blacksmith-agent
+install -m 0644 deploy/systemd/*.service deploy/blacksmith.service /etc/systemd/system/
+install -o root -g root -m 0644 deploy/polkit/10-blacksmith.rules /etc/polkit-1/rules.d/
+systemctl daemon-reload && systemctl restart blacksmith.service
+sh deploy/nginx/install.sh                                  # if you use web sites
+sh deploy/nginx/install-webhooks.sh hooks.example.com       # if you use webhooks
+```
+
+The database is migrated automatically. Your edited nginx templates and the webhook secret are
+kept.
 
 ## Development
 

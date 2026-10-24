@@ -6,11 +6,12 @@
 #   done
 #   install -D -o root -g root -m 0755 target/release/blacksmith-agent /opt/blacksmith/bin/blacksmith-agent
 #   install -d -o root -g blacksmith -m 0750 /etc/blacksmith
-#   install -o root -g blacksmith -m 0640 agent.env /etc/blacksmith/agent.env   # ver .env.template
+#   install -o root -g blacksmith -m 0640 deploy/agent.env /etc/blacksmith/agent.env
 #   install -o root -g root -m 0644 deploy/polkit/10-blacksmith.rules /etc/polkit-1/rules.d/
 #   install -m 0644 deploy/systemd/*.service /etc/systemd/system/
 #   install -m 0644 deploy/blacksmith.service /etc/systemd/system/blacksmith.service
 #   systemctl daemon-reload && systemctl enable --now blacksmith
+# Guía completa (paquetes, verificación, nginx y webhooks): README.md, «Complete setup guide».
 #
 # Tres usuarios: el agente (`blacksmith`), los servicios (`blacksmith-apps`) y el clon de los
 # repositorios (`blacksmith-fetch`). Solo el agente tiene permisos de polkit; ver
@@ -56,11 +57,8 @@ ConfigurationDirectoryMode=0700
 # Configuración no secreta (BLACKSMITH_*). root:blacksmith 0640.
 Environment=BLACKSMITH_ENV=production
 EnvironmentFile=/etc/blacksmith/agent.env
-# Secretos como credenciales de systemd: se montan en un tmpfs privado (0400), no aparecen en
-# el entorno y no los heredan los procesos hijos. Descomente las dos líneas cuando cree el
-# archivo (root:root 0600); si falta, la unit no arranca.
-#LoadCredential=github-webhook-secret:/etc/blacksmith/credentials/github-webhook-secret
-#Environment=BLACKSMITH_GITHUB_WEBHOOK_SECRET_FILE=/run/credentials/blacksmith.service/github-webhook-secret
+# El secreto de los webhooks llega como credencial de systemd (tmpfs privado, fuera del entorno)
+# con un drop-in que crea deploy/nginx/install-webhooks.sh: no edite esta unidad para eso.
 
 # glibc crea un arena de malloc por hilo; limitarlos mantiene la RSS baja (objetivo < 20 MB).
 Environment=MALLOC_ARENA_MAX=2
