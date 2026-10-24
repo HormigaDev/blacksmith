@@ -13,7 +13,8 @@ use std::{
     collections::HashMap,
     ffi::OsString,
     fmt,
-    fs::File,
+    env,
+    fs::{self, File},
     io::Read,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     ops::RangeInclusive,
@@ -436,6 +437,16 @@ fn parse_log_filter(raw: &str) -> Result<String, String> {
         .map_err(|error| format!("directiva de registro inválida: {error}"))
 }
 
+fn is_systemd_credential(path: &str) -> bool {
+    let Some(dir) = env::var_os("CREDENTIALS_DIRECTORY") else {
+        return false;
+    };
+    let (Ok(dir), Ok(file)) = (fs::canonicalize(dir), fs::canonicalize(path)) else {
+        return false;
+    };
+    file.parent() == Some(dir.as_path())
+}
+
 /// Lee un secreto de un archivo propio del usuario del servicio y sin permisos para nadie más.
 /// Se admite un único salto de línea final (el que dejan `echo` y los editores).
 fn read_secret_file(path: &str) -> Result<SecretString, String> {
@@ -448,7 +459,10 @@ fn read_secret_file(path: &str) -> Result<SecretString, String> {
         return Err(fail(&"no es un archivo regular"));
     }
     let mode = metadata.permissions().mode() & 0o777;
-    if mode & 0o077 != 0 {
+    // systemd entrega las credenciales (LoadCredential=) con 0440 en un tmpfs privado de la unidad:
+    // ahí se tolera la lectura del grupo.
+    let forbidden = if is_systemd_credential(path) { 0o037 } else { 0o077 };
+    if mode & forbidden != 0 {
         return Err(fail(&format_args!(
             "permisos {mode:03o} demasiado abiertos; use `chmod 600` o LoadCredential="
         )));
