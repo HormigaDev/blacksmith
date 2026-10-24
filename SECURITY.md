@@ -4,12 +4,12 @@
 
 Security fixes are currently provided for the following release line:
 
-| Version | Supported |
-| --- | --- |
-| `v1.0.x` | Yes |
-| `v1.0.0` | Yes |
-| Older releases | No |
-| Development snapshots and unreleased builds | No |
+| Version                                     | Supported |
+| ------------------------------------------- | --------- |
+| `v1.0.x`                                    | Yes       |
+| `v1.0.0`                                    | Yes       |
+| Older releases                              | No        |
+| Development snapshots and unreleased builds | No        |
 
 The supported version is `v1.0.0` and later patch releases in the `v1.0.x` line. Users should
 upgrade to the latest available patch release before reporting a problem whenever possible.
